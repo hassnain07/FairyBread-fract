@@ -16,9 +16,9 @@ export interface BookingEligibility {
 }
 
 export function useBookingEligibility(familyId: string): BookingEligibility {
-  const { gatingState, activeTerm, weeksRemaining, expiringSoon, isLoading } = useTermStatus(familyId);
+  const { gatingState, activeTerm, weeksRemaining, expiringSoon, isLoading, classesRemaining } = useTermStatus(familyId);
 
-  const classesRemaining = activeTerm?.classes_remaining ?? 0;
+  // classesRemaining comes from server gating snapshot when available
 
   // Regular class: ACTIVE_TERM + credits > 0
   const canBookRegularClass = gatingState === 'ACTIVE_TERM' && classesRemaining > 0;

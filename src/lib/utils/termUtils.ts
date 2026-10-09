@@ -1,5 +1,6 @@
 import type { Term, TermGatingState } from '../../types/term';
-import { TERM_EXPIRY_WARNING_WEEKS } from '../config';
+
+const DEFAULT_EXPIRY_WARNING_WEEKS = 2;
 
 /**
  * Derives the gating state for a family from their term history.
@@ -45,7 +46,7 @@ export function termWeeksRemaining(term: Term, now: Date = new Date()): number {
  * Returns true if the term is within the expiry warning window
  * (≤ TERM_EXPIRY_WARNING_WEEKS weeks remaining, but not yet expired).
  */
-export function isTermExpiringSoon(term: Term, now: Date = new Date()): boolean {
+export function isTermExpiringSoon(term: Term, now: Date = new Date(), warningWeeks = DEFAULT_EXPIRY_WARNING_WEEKS): boolean {
   const weeks = termWeeksRemaining(term, now);
-  return weeks > 0 && weeks <= TERM_EXPIRY_WARNING_WEEKS;
+  return weeks > 0 && weeks <= warningWeeks;
 }

@@ -1,8 +1,5 @@
 import type { Child } from '../../../types/family';
 
-// Mappers convert raw Supabase rows to app types.
-// Each phase adds the mappers it needs; this file grows incrementally.
-
 export const toChild = (r: any): Child => ({
   id: r.id,
   family_id: r.family_id,

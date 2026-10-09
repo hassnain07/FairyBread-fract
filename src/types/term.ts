@@ -1,19 +1,21 @@
-import type { Payment } from './payment';
-
-export type TermStatus = 'active' | 'expired' | 'pending_payment';
-
-// Gating states — implement as explicit state machine per spec Section 2.1
+export type TermStatus = 'active' | 'expired' | 'pending_payment' | 'scheduled';
 export type TermGatingState = 'NO_TERM_EVER' | 'ACTIVE_TERM' | 'TERM_EXPIRED';
 
 export type Term = {
   id: string;
   family_id: string;
   status: TermStatus;
+  term_label?: string;
   start_date: string;
-  end_date: string; // start_date + 10 weeks
-  // TODO: confirm with client — currently assumed constant 10, stored not hardcoded in UI logic
+  end_date: string; // exclusive
   classes_included: number;
   classes_booked: number;
-  classes_remaining: number; // derived but stored for query simplicity
-  payment?: Payment;
+  classes_remaining: number;
+};
+
+export type GatingSnapshot = {
+  state: TermGatingState;
+  active_term_id?: string;
+  classes_remaining: number;
+  end_date?: string;
 };

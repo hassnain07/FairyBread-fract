@@ -19,7 +19,7 @@ const nav = [
 ];
 
 const titles: Record<string, [string, string]> = {
-  '/admin': ['Good morning, Therese', "Here's the heartbeat of Fairybread & Fractions today."],
+  '/admin': ['Admin dashboard', "Here's the heartbeat of Fairybread & Fractions today."],
   '/admin/bookings': ['Bookings', 'A clear view of the week ahead.'],
   '/admin/family-booking': ['Family booking', 'Book on behalf of families without portal access.'],
   '/admin/my-teaching': ['My teaching', 'Manage your own classes, students and reports.'],
@@ -49,8 +49,6 @@ export function AdminLayout() {
       subtitle={subtitle}
       menuOpen={menuOpen}
       onMenuToggle={() => setMenuOpen(v => !v)}
-      onSwitchRole={() => navigate('/parent')}
-      onHome={() => navigate('/')}
     >
       <Outlet />
     </AppShell>

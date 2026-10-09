@@ -14,7 +14,7 @@ const nav = [
 ];
 
 const titles: Record<string, [string, string]> = {
-  '/teacher': ['Good morning, Jessica', "Here's your schedule for today."],
+  '/teacher': ['Teacher dashboard', "Here's your schedule for today."],
   '/teacher/classes': ['My classes', 'Manage your timetable and class pricing.'],
   '/teacher/students': ['My students', 'Students across all your classes.'],
   '/teacher/attendance': ['Attendance', 'Mark attendance for your sessions.'],
@@ -39,8 +39,6 @@ export function TeacherLayout() {
       subtitle={subtitle}
       menuOpen={menuOpen}
       onMenuToggle={() => setMenuOpen(v => !v)}
-      onSwitchRole={() => navigate('/admin')}
-      onHome={() => navigate('/')}
     >
       <Outlet />
     </AppShell>

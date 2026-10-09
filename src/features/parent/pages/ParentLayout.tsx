@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { BarChart3, CalendarDays, CircleDollarSign, ClipboardList, FileText, LayoutDashboard, MessageCircle, Package, ShoppingBag, Ticket, Users } from 'lucide-react';
 import { AppShell } from '../../../components/layout/AppShell';
+import { useAuth } from '../../../app/providers';
 
 const nav = [
   { id: '/parent', label: 'Overview', icon: LayoutDashboard },
@@ -17,24 +18,45 @@ const nav = [
   { id: '/parent/orders', label: 'My orders', icon: Package },
 ];
 
-const titles: Record<string, [string, string]> = {
-  '/parent': ['Good afternoon, Sarah', 'Here is what is happening with your family this week.'],
-  '/parent/children': ['My children', 'Keep an eye on their learning journey.'],
-  '/parent/book-assessment': ['Book an assessment', 'A lovely first step towards confident learning.'],
-  '/parent/book-class': ["Emma's classes", 'This week: 1 of 2 sessions booked'],
-  '/parent/bookings': ['My bookings', 'Your upcoming sessions, all in one place.'],
-  '/parent/reports': ["Emma's learning journey", 'Progress worth celebrating.'],
-  '/parent/messages': ['Messages', 'A little inbox for all the important things.'],
-  '/parent/payments': ['Payments', 'Simple, clear and all in one place.'],
-  '/parent/enrol': ['Complete enrolment', "A few details and we'll be ready to begin."],
+const subtitles: Record<string, string> = {
+  '/parent': 'Here is what is happening with your family this week.',
+  '/parent/children': 'Keep an eye on their learning journey.',
+  '/parent/book-assessment': 'A lovely first step towards confident learning.',
+  '/parent/book-class': 'Choose a session for your child this week.',
+  '/parent/bookings': 'Your upcoming sessions, all in one place.',
+  '/parent/reports': 'Progress worth celebrating.',
+  '/parent/messages': 'A little inbox for all the important things.',
+  '/parent/payments': 'Simple, clear and all in one place.',
+  '/parent/enrol': "A few details and we'll be ready to begin.",
 };
+
+const titles: Record<string, string> = {
+  '/parent/children': 'My children',
+  '/parent/book-assessment': 'Book an assessment',
+  '/parent/book-class': 'Book a class',
+  '/parent/bookings': 'My bookings',
+  '/parent/reports': 'Learning journey',
+  '/parent/messages': 'Messages',
+  '/parent/payments': 'Payments',
+  '/parent/enrol': 'Complete enrolment',
+};
+
+function timeOfDay() {
+  const h = new Date().getHours();
+  if (h < 12) return 'morning';
+  if (h < 17) return 'afternoon';
+  return 'evening';
+}
 
 export function ParentLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
   const path = location.pathname.replace(/\/children\/.*/, '/children');
-  const [title, subtitle] = titles[path] ?? ['Parent portal', ''];
+
+  const title = titles[path] ?? `Good ${timeOfDay()}, ${user?.firstName ?? 'there'}`;
+  const subtitle = subtitles[path] ?? '';
 
   return (
     <AppShell
@@ -46,8 +68,6 @@ export function ParentLayout() {
       subtitle={subtitle}
       menuOpen={menuOpen}
       onMenuToggle={() => setMenuOpen(v => !v)}
-      onSwitchRole={() => navigate('/admin')}
-      onHome={() => navigate('/')}
     >
       <Outlet />
     </AppShell>

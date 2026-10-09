@@ -1,10 +1,12 @@
-import { Check, CircleDollarSign, Clock3, Download, FileText, X, Image } from 'lucide-react';
+import { Check, CircleDollarSign, Clock3, ExternalLink, X } from 'lucide-react';
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '../../../components/ui/Button';
 import { dataClient } from '../../../lib/data/client';
+import { qk } from '../../../lib/data/queryKeys';
+import { formatMoney } from '../../../lib/utils/money';
+import { toAppError } from '../../../lib/data/errors';
 import type { Payment } from '../../../types/payment';
-import { TERM_CREDITS } from '../../../lib/config';
 
 function Stat({ label, value, accent, icon: Icon }: { label: string; value: string; accent: string; icon: React.ElementType }) {
   return (
@@ -24,42 +26,73 @@ export function AdminPaymentsPage() {
   const qc = useQueryClient();
   const [reviewing, setReviewing] = useState<Payment | null>(null);
   const [activeTab, setActiveTab] = useState<'pending' | 'all'>('pending');
+  const [rejectNote, setRejectNote] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [proofUrl, setProofUrl] = useState<string | null>(null);
+  const [loadingProof, setLoadingProof] = useState(false);
 
-  const { data: pendingPayments = [], isLoading: loadingPending } = useQuery({
-    queryKey: ['pendingPayments'],
-    queryFn: () => dataClient.getPendingPayments(),
+  const { data: allPayments = [], isLoading } = useQuery({
+    queryKey: qk.allPayments,
+    queryFn: () => dataClient.getAllPayments!(),
   });
 
-  // Fetch all payments across all families for the "All payments" tab
-  const ALL_FAMILY_IDS = ['f1', 'f2', 'f3', 'f4'];
-  const { data: allPayments = [], isLoading: loadingAll } = useQuery({
-    queryKey: ['allPayments'],
-    queryFn: async () => (await Promise.all(ALL_FAMILY_IDS.map(id => dataClient.getPayments(id)))).flat(),
-  });
+  const pendingPayments = allPayments.filter(p => p.status === 'pending');
+  const displayRows = activeTab === 'pending' ? pendingPayments : allPayments;
+
+  const paidTotal = allPayments.filter(p => p.status === 'paid').reduce((s, p) => s + p.total_cents, 0);
+  const pendingTotal = allPayments.filter(p => p.status === 'pending').reduce((s, p) => s + p.total_cents, 0);
+  const rejectedTotal = allPayments.filter(p => p.status === 'rejected' || p.status === 'failed').reduce((s, p) => s + p.total_cents, 0);
 
   const { mutate: verify, isPending: verifying } = useMutation({
-    mutationFn: ({ id, action }: { id: string; action: 'approve' | 'reject' }) =>
-      dataClient.verifyPayment(id, action),
+    mutationFn: ({ id, action, note }: { id: string; action: 'approve' | 'reject'; note?: string }) =>
+      dataClient.verifyPayment!(id, action, note),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['pendingPayments'] });
-      qc.invalidateQueries({ queryKey: ['allPayments'] });
+      qc.invalidateQueries({ queryKey: qk.allPayments });
+      qc.invalidateQueries({ queryKey: qk.allTerms });
+      qc.invalidateQueries({ queryKey: qk.adminStats });
       setReviewing(null);
+      setRejectNote('');
+      setProofUrl(null);
+      setActionError('');
     },
+    onError: (e) => setActionError(toAppError(e).message),
   });
 
-  const paidTotal = allPayments.filter(p => p.status === 'paid').reduce((s, p) => s + p.amount + p.gst, 0);
-  const pendingTotal = allPayments.filter(p => p.status === 'pending').reduce((s, p) => s + p.amount + p.gst, 0);
-  const rejectedTotal = allPayments.filter(p => p.status === 'rejected' || p.status === 'failed').reduce((s, p) => s + p.amount + p.gst, 0);
+  async function openReview(p: Payment) {
+    setReviewing(p);
+    setRejectNote('');
+    setActionError('');
+    setProofUrl(null);
+    if (p.proof_filename) {
+      setLoadingProof(true);
+      try {
+        const url = await dataClient.getProofUrl!(p.id);
+        setProofUrl(url);
+      } catch {
+        setProofUrl(null);
+      } finally {
+        setLoadingProof(false);
+      }
+    }
+  }
 
-  const displayRows = activeTab === 'pending' ? pendingPayments : allPayments;
-  const isLoading = activeTab === 'pending' ? loadingPending : loadingAll;
+  function handleApprove() {
+    if (!reviewing) return;
+    verify({ id: reviewing.id, action: 'approve' });
+  }
+
+  function handleReject() {
+    if (!reviewing) return;
+    if (!rejectNote.trim()) { setActionError('A rejection note is required.'); return; }
+    verify({ id: reviewing.id, action: 'reject', note: rejectNote.trim() });
+  }
 
   return (
     <div className="page-stack">
       <div className="admin-payment-stats">
-        <Stat label="Paid this term" value={`$${paidTotal.toLocaleString()}`} accent="teal" icon={Check} />
-        <Stat label="Pending verification" value={`$${pendingTotal.toLocaleString()}`} accent="yellow" icon={Clock3} />
-        <Stat label="Rejected / Failed" value={`$${rejectedTotal.toLocaleString()}`} accent="orange" icon={X} />
+        <Stat label="Paid this term" value={formatMoney(paidTotal)} accent="teal" icon={Check} />
+        <Stat label="Pending verification" value={formatMoney(pendingTotal)} accent="yellow" icon={Clock3} />
+        <Stat label="Rejected / Failed" value={formatMoney(rejectedTotal)} accent="orange" icon={X} />
       </div>
 
       <div className="card table-card">
@@ -71,20 +104,13 @@ export function AdminPaymentsPage() {
               Review proof of payment submitted by families and approve or reject.
             </p>
           </div>
-          <Button variant="soft" icon={Download}>Export</Button>
         </div>
 
         <div className="table-filters">
-          <button
-            className={activeTab === 'pending' ? 'filter-active' : ''}
-            onClick={() => setActiveTab('pending')}
-          >
+          <button className={activeTab === 'pending' ? 'filter-active' : ''} onClick={() => setActiveTab('pending')}>
             Pending review <span>{pendingPayments.length}</span>
           </button>
-          <button
-            className={activeTab === 'all' ? 'filter-active' : ''}
-            onClick={() => setActiveTab('all')}
-          >
+          <button className={activeTab === 'all' ? 'filter-active' : ''} onClick={() => setActiveTab('all')}>
             All payments <span>{allPayments.length}</span>
           </button>
         </div>
@@ -92,46 +118,35 @@ export function AdminPaymentsPage() {
         <div className="table-wrap">
           <table>
             <thead>
-              <tr>
-                {['Family', 'Type', 'Details', 'Reference', 'Amount', 'Receipt', 'Date', 'Status', ''].map(h => <th key={h}>{h}</th>)}
-              </tr>
+              <tr>{['Family', 'Type', 'Details', 'Reference', 'Amount', 'Date', 'Status', ''].map(h => <th key={h}>{h}</th>)}</tr>
             </thead>
             <tbody>
-              {isLoading && (
-                <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--muted)', padding: 24 }}>Loading…</td></tr>
-              )}
+              {isLoading && <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--muted)', padding: 24 }}>Loading…</td></tr>}
               {!isLoading && displayRows.length === 0 && (
-                <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--muted)', padding: 24 }}>
+                <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--muted)', padding: 24 }}>
                   {activeTab === 'pending' ? 'No payments pending verification.' : 'No payments found.'}
                 </td></tr>
               )}
               {displayRows.map(p => (
-                <tr key={p.id} className={p.status === 'pending' ? 'row-clickable' : ''} onClick={p.status === 'pending' ? () => setReviewing(p) : undefined}>
+                <tr key={p.id} className={p.status === 'pending' ? 'row-clickable' : ''} onClick={p.status === 'pending' ? () => openReview(p) : undefined}>
                   <td><strong className="table-name">{p.family_name ?? p.family_id}</strong></td>
                   <td>
                     <span className={`table-status ${p.type === 'term' ? 'confirmed' : 'view'}`}>
-                      {p.type === 'term' ? 'Term' : 'Individual'}
+                      {p.type === 'term' ? 'Term' : p.type === 'assessment' ? 'Assessment' : 'Individual'}
                     </span>
                   </td>
                   <td style={{ color: 'var(--ink)', maxWidth: 180, whiteSpace: 'normal', lineHeight: 1.4 }}>
                     {p.type === 'term'
                       ? (p.term_label ?? 'Term payment')
-                      : `${p.class_subject} · ${p.child_name}`}
+                      : `${p.details.subject ?? p.type} · ${p.details.child_name ?? ''}`}
                   </td>
                   <td><code style={{ fontSize: 10, background: '#f4f7f3', padding: '2px 6px', borderRadius: 4 }}>{p.reference}</code></td>
-                  <td><strong>${(p.amount + p.gst).toFixed(0)}</strong></td>
-                  <td>
-                    {p.receipt_filename
-                      ? <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--teal)', fontSize: 11, fontWeight: 600 }}><Image size={13} />{p.receipt_filename}</span>
-                      : <span style={{ color: 'var(--muted)', fontSize: 11 }}>—</span>}
-                  </td>
+                  <td><strong>{formatMoney(p.total_cents)}</strong></td>
                   <td style={{ fontSize: 11 }}>{new Date(p.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
                   <td><StatusBadge status={p.status} /></td>
                   <td>
                     {p.status === 'pending' && (
-                      <button className="btn-view-profile" onClick={e => { e.stopPropagation(); setReviewing(p); }}>
-                        Review
-                      </button>
+                      <button className="btn-view-profile" onClick={e => { e.stopPropagation(); openReview(p); }}>Review</button>
                     )}
                   </td>
                 </tr>
@@ -141,56 +156,69 @@ export function AdminPaymentsPage() {
         </div>
       </div>
 
-      {/* Verification modal */}
       {reviewing && (
-        <div className="modal-backdrop" onClick={() => setReviewing(null)}>
+        <div className="modal-backdrop" onClick={() => { setReviewing(null); setProofUrl(null); }}>
           <div className="modal payment-review-modal" onClick={e => e.stopPropagation()}>
-            <button className="modal-close" onClick={() => setReviewing(null)}><X size={18} /></button>
+            <button className="modal-close" onClick={() => { setReviewing(null); setProofUrl(null); }}><X size={18} /></button>
             <div className="modal-icon payment"><CircleDollarSign size={22} /></div>
             <h2>Verify payment</h2>
             <p>Review the submitted proof and approve or reject this payment.</p>
 
-            {/* Receipt preview */}
             <div className="receipt-preview">
-              {reviewing.receipt_filename ? (
+              {loadingProof ? (
+                <div className="receipt-placeholder"><p style={{ color: 'var(--muted)', fontSize: 13 }}>Loading proof…</p></div>
+              ) : proofUrl ? (
                 <div className="receipt-placeholder receipt-has-file">
-                  <Image size={36} />
-                  <span>{reviewing.receipt_filename}</span>
-                  <small>Submitted by {reviewing.family_name}</small>
+                  <a href={proofUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--teal)', fontWeight: 600, fontSize: 13 }}>
+                    <ExternalLink size={16} /> View proof — {reviewing.proof_filename}
+                  </a>
+                  <small>Opens in a new tab · link expires in 5 minutes</small>
                 </div>
               ) : (
                 <div className="receipt-placeholder">
-                  <FileText size={36} />
-                  <span>No receipt uploaded</span>
-                  <small>Parent did not attach a file</small>
+                  <p style={{ color: 'var(--muted)', fontSize: 13 }}>No receipt uploaded</p>
                 </div>
               )}
             </div>
 
-            {/* Payment details */}
             <div className="review-details">
               <div className="review-detail-row"><span>Family</span><b>{reviewing.family_name ?? reviewing.family_id}</b></div>
-              <div className="review-detail-row"><span>Type</span><b>{reviewing.type === 'term' ? 'Term payment' : 'Individual class'}</b></div>
-              {reviewing.type === 'term' && (
-                <div className="review-detail-row"><span>Term</span><b>{reviewing.term_label ?? '—'}</b></div>
+              <div className="review-detail-row"><span>Type</span><b>{reviewing.type === 'term' ? 'Term payment' : reviewing.type === 'assessment' ? 'Assessment' : 'Individual class'}</b></div>
+              {reviewing.type === 'term' && reviewing.term_label && (
+                <div className="review-detail-row"><span>Term</span><b>{reviewing.term_label}</b></div>
+              )}
+              {reviewing.type !== 'term' && reviewing.details.child_name && (
+                <div className="review-detail-row"><span>Child</span><b>{reviewing.details.child_name}</b></div>
               )}
               {reviewing.type === 'individual_class' && (<>
-                <div className="review-detail-row"><span>Child</span><b>{reviewing.child_name}</b></div>
-                <div className="review-detail-row"><span>Class</span><b>{reviewing.class_subject} · {reviewing.class_day} {reviewing.class_time}</b></div>
-                <div className="review-detail-row"><span>Tutor</span><b>{reviewing.class_tutor}</b></div>
+                {reviewing.details.subject && <div className="review-detail-row"><span>Class</span><b>{reviewing.details.subject}{reviewing.details.day ? ` · ${reviewing.details.day}` : ''}{reviewing.details.time ? ` ${reviewing.details.time}` : ''}</b></div>}
+                {reviewing.details.tutor && <div className="review-detail-row"><span>Tutor</span><b>{reviewing.details.tutor}</b></div>}
               </>)}
               <div className="review-detail-row"><span>Reference</span><b><code style={{ fontSize: 11 }}>{reviewing.reference}</code></b></div>
-              <div className="review-detail-row"><span>Amount</span><b>${reviewing.amount.toFixed(0)} + ${reviewing.gst.toFixed(0)} GST = ${(reviewing.amount + reviewing.gst).toFixed(0)} AUD</b></div>
+              <div className="review-detail-row"><span>Amount</span><b>{formatMoney(reviewing.amount_cents)} + {formatMoney(reviewing.gst_cents)} GST = {formatMoney(reviewing.total_cents)} AUD</b></div>
               {reviewing.type === 'term' && (
-                <div className="review-detail-row"><span>Credits</span><b>{TERM_CREDITS} class credits unlocked on approval</b></div>
+                <div className="review-detail-row"><span>Credits</span><b>10 class credits unlocked on approval</b></div>
               )}
             </div>
 
+            <div style={{ marginTop: 16 }}>
+              <label style={{ fontSize: 12, color: 'var(--muted)', display: 'block', marginBottom: 6 }}>
+                Rejection note <span style={{ color: 'var(--orange)' }}>(required to reject)</span>
+              </label>
+              <textarea
+                value={rejectNote}
+                onChange={e => setRejectNote(e.target.value)}
+                placeholder="e.g. Reference number doesn't match, please resubmit with the correct reference."
+                rows={3}
+                style={{ width: '100%', borderRadius: 8, border: '1px solid var(--line)', padding: '8px 12px', fontSize: 13, resize: 'vertical' }}
+              />
+            </div>
+
+            {actionError && <p className="auth-error" style={{ marginTop: 8 }}>{actionError}</p>}
+
             <div className="review-actions">
-              <Button variant="ghost" icon={X} onClick={() => verify({ id: reviewing.id, action: 'reject' })} disabled={verifying}>
-                Reject
-              </Button>
-              <Button icon={Check} onClick={() => verify({ id: reviewing.id, action: 'approve' })} disabled={verifying}>
+              <Button variant="ghost" icon={X} onClick={handleReject} disabled={verifying}>Reject</Button>
+              <Button icon={Check} onClick={handleApprove} disabled={verifying}>
                 {verifying ? 'Saving…' : 'Approve payment'}
               </Button>
             </div>

@@ -7,10 +7,12 @@ import { TermCreditMeter } from '../../../components/domain/TermCreditMeter';
 import { useBookingEligibility } from '../hooks/useBookingEligibility';
 import { useAuth } from '../../../app/providers';
 import { dataClient } from '../../../lib/data/client';
+import { qk } from '../../../lib/data/queryKeys';
+import { toAppError } from '../../../lib/data/errors';
 
 const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
-const COLORS: Record<string, string> = { Mathematics: 'pink', English: 'teal', Reading: 'orange', 'Reading & Spelling': 'orange' };
+const COLORS: Record<string, string> = { Mathematics: 'pink', English: 'teal', Reading: 'orange' };
 
 export function BookingsPage() {
   const navigate = useNavigate();
@@ -18,48 +20,30 @@ export function BookingsPage() {
   const qc = useQueryClient();
   const { activeTerm } = useBookingEligibility(familyId);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [cancelResult, setCancelResult] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState('');
 
-  const { data: bookings = [], isLoading: loadingBookings } = useQuery({
-    queryKey: ['bookings', familyId],
+  const { data: bookings = [], isLoading } = useQuery({
+    queryKey: qk.bookings(familyId),
     queryFn: () => dataClient.getBookings(familyId),
-  });
-
-  const { data: classInstances = [] } = useQuery({
-    queryKey: ['classInstances'],
-    queryFn: () => dataClient.getClassInstances(),
-  });
-
-  const { data: children = [] } = useQuery({
-    queryKey: ['children', familyId],
-    queryFn: () => dataClient.getChildren(familyId),
+    enabled: !!familyId,
   });
 
   const { mutate: cancelBooking, isPending: cancelling } = useMutation({
     mutationFn: (id: string) => dataClient.cancelBooking(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['bookings', familyId] });
-      qc.invalidateQueries({ queryKey: ['terms', familyId] });
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: qk.bookings(familyId) });
+      qc.invalidateQueries({ queryKey: qk.terms(familyId) });
+      qc.invalidateQueries({ queryKey: ['gating', familyId] });
+      qc.invalidateQueries({ queryKey: qk.sessions() });
       setCancellingId(null);
+      setCancelResult(result.credit_restored ? 'Booking cancelled — your credit has been returned.' : 'Booking cancelled.');
+      setCancelError('');
     },
+    onError: (e) => setCancelError(toAppError(e).message),
   });
 
   const activeBookings = bookings.filter(b => b.status !== 'cancelled');
-
-  // Enrich each booking with class + child info
-  const enriched = activeBookings.map(b => {
-    const cls = classInstances.find(c => c.id === b.class_instance_id);
-    const child = children.find(c => c.id === b.child_id);
-    const color = cls ? (COLORS[cls.subject] ?? 'yellow') : 'yellow';
-    return { booking: b, cls, child, color };
-  });
-
-  // Fake a date for display (real dates would come from a scheduled class_date field)
-  const today = new Date();
-  const getDisplayDate = (index: number) => {
-    const d = new Date(today);
-    d.setDate(today.getDate() + index * 2 + 1);
-    return d;
-  };
 
   return (
     <div className="page-stack">
@@ -70,38 +54,59 @@ export function BookingsPage() {
 
       {activeTerm && <TermCreditMeter term={activeTerm} />}
 
-      <div className="booking-cards">
-        {loadingBookings && <p style={{ color: 'var(--muted)', fontSize: 13 }}>Loading bookings…</p>}
+      {cancelResult && (
+        <div className="unlock-banner" style={{ background: 'var(--success-bg, #f0fdf4)' }}>
+          <Check size={18} /><span>{cancelResult}</span>
+          <button onClick={() => setCancelResult(null)} style={{ marginLeft: 'auto' }}><X size={16} /></button>
+        </div>
+      )}
 
-        {!loadingBookings && enriched.length === 0 && (
+      <div className="booking-cards">
+        {isLoading && <p style={{ color: 'var(--muted)', fontSize: 13 }}>Loading bookings…</p>}
+
+        {!isLoading && activeBookings.length === 0 && (
           <div className="card" style={{ textAlign: 'center', padding: '32px 24px' }}>
             <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 16 }}>No upcoming bookings yet.</p>
             <Button onClick={() => navigate('/parent/book-class')} icon={Plus}>Book a class</Button>
           </div>
         )}
 
-        {enriched.map(({ booking, cls, child, color }, i) => {
-          const d = getDisplayDate(i);
+        {activeBookings.map(booking => {
+          const session = booking.session;
+          const child = booking.child;
+          const color = session ? (COLORS[session.subject] ?? 'yellow') : 'yellow';
+          const d = session ? new Date(session.starts_at) : null;
+
           return (
             <div className={`card booking-card ${color}`} key={booking.id}>
-              <div className="booking-date">
-                <span>{DAYS[d.getDay()]}</span>
-                <strong>{d.getDate()}</strong>
-                <small>{MONTHS[d.getMonth()]}</small>
-              </div>
+              {d && (
+                <div className="booking-date">
+                  <span>{DAYS[d.getDay()]}</span>
+                  <strong>{d.getDate()}</strong>
+                  <small>{MONTHS[d.getMonth()]}</small>
+                </div>
+              )}
               <div className="booking-main">
-                <span className="label">{cls?.subject ?? '—'}</span>
-                <h3>{cls ? `${cls.subject} with ${cls.teacher_id}` : 'Class'}</h3>
-                <p><Clock3 size={15} />{cls?.time ?? '—'}</p>
-                <p><UserRound size={15} />{child?.name ?? '—'}</p>
+                <span className="label">{session?.subject ?? '—'}</span>
+                <h3>{session ? `${session.subject} with ${session.teacher_name}` : 'Class'}</h3>
+                {d && <p><Clock3 size={15} />{d.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })}</p>}
+                {child && <p><UserRound size={15} />{child.name}</p>}
               </div>
               <div className="booking-right">
-                <span className={`status ${booking.status === 'confirmed' ? 'confirmed' : 'pending'}`}>
-                  <Check size={13} />{booking.status === 'confirmed' ? 'Confirmed' : booking.status}
-                </span>
-                <button onClick={() => setCancellingId(booking.id)}>
-                  Cancel booking <ChevronRight size={15} />
-                </button>
+                {booking.status === 'confirmed' && (
+                  <span className="status confirmed"><Check size={13} />Confirmed</span>
+                )}
+                {booking.status === 'waiting_list' && (
+                  <span className="status pending">On waiting list</span>
+                )}
+                {booking.status === 'pending_payment' && (
+                  <span className="status pending">Awaiting payment</span>
+                )}
+                {booking.status === 'confirmed' && (
+                  <button onClick={() => { setCancellingId(booking.id); setCancelError(''); }}>
+                    Cancel booking <ChevronRight size={15} />
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -116,14 +121,14 @@ export function BookingsPage() {
         </div>
       </div>
 
-      {/* Cancel confirmation modal */}
       {cancellingId && (
         <div className="modal-backdrop" onClick={() => setCancellingId(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <button className="modal-close" onClick={() => setCancellingId(null)}><X size={18} /></button>
             <div className="modal-icon cancel"><Clock3 size={22} /></div>
             <h2>Cancel booking?</h2>
-            <p>This will cancel the booking and restore your class credit if cancelled within the allowed window.</p>
+            <p>If you cancel more than 24 hours before the session, your class credit will be returned.</p>
+            {cancelError && <p className="auth-error">{cancelError}</p>}
             <Button onClick={() => cancelBooking(cancellingId)} disabled={cancelling}>
               {cancelling ? 'Cancelling…' : 'Yes, cancel booking'}
             </Button>
