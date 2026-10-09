@@ -1,10 +1,10 @@
 import type { Family, Child, NewChild, ChildPatch, EnrolmentInput } from '../../types/family';
 import type { Term, GatingSnapshot } from '../../types/term';
-import type { ClassBooking, BookingCancelResult, Assessment, StudentReport, NewReport, AttendanceRecord, IndividualClassPurchase } from '../../types/booking';
+import type { ClassBooking, BookingCancelResult, Assessment, StudentReport, NewReport, AttendanceRecord } from '../../types/booking';
 import type { Payment, PaymentIntent, PriceQuote } from '../../types/payment';
-import type { Teacher, ClassSlot, ClassSession, ClassSlotInput, Program, ClassInstance } from '../../types/teacher';
-import type { Conversation, ChatMessage, AppNotification } from '../../types/message';
-import type { ShopProduct, ShopOrder, ShopCartItem } from '../../types/shop';
+import type { Teacher, ClassSlot, ClassSession, ClassSlotInput, Program } from '../../types/teacher';
+import type { Conversation, ChatMessage, AppNotification, ConversationKind, NotificationCategory } from '../../types/message';
+import type { ShopProduct, ShopOrder, PlaceOrderInput, PlacedOrder, ShopStats, AdminShopProduct, ShopProductInput } from '../../types/shop';
 import type { AuthUser } from '../../types/auth';
 import type { AdminStats, Closure } from '../../types/admin';
 
@@ -22,22 +22,25 @@ export interface DataClient {
   // ── Settings / content ────────────────────────────────────────────────────
   getSettings(): Promise<Record<string, unknown>>;
   updateSetting(key: string, value: unknown): Promise<void>;
-  getDocuments(): Promise<Record<string, string>>; // key → public URL
+  getDocuments(): Promise<Record<string, string>>;
   uploadDocument(key: string, file: File): Promise<string>;
 
   // ── Families & children ───────────────────────────────────────────────────
   getFamily(familyId: string): Promise<Family>;
   getAllFamilies(): Promise<Family[]>;
+  createFamily(input: { parentName: string; email?: string; phone?: string }): Promise<Family>;
   getChildren(familyId: string): Promise<Child[]>;
   getAllChildren(): Promise<Child[]>;
   addChild(familyId: string, child: NewChild): Promise<Child>;
   updateChild(childId: string, patch: ChildPatch): Promise<Child>;
   completeEnrolment(childId: string, input: EnrolmentInput): Promise<Child>;
+  adminMarkEnrolled(childId: string, note?: string): Promise<Child>;
 
   // ── Terms & gating ────────────────────────────────────────────────────────
   getTerms(familyId: string): Promise<Term[]>;
   getAllTerms(): Promise<Term[]>;
   getGating(familyId: string): Promise<GatingSnapshot>;
+  adminAdjustCredits(termId: string, delta: number, note: string): Promise<Term>;
 
   // ── Catalog & sessions ────────────────────────────────────────────────────
   getTeachers(): Promise<Teacher[]>;
@@ -68,7 +71,6 @@ export interface DataClient {
   getAllPayments(opts?: { status?: Payment['status'] }): Promise<Payment[]>;
   submitPayment(intent: PaymentIntent, proof: File): Promise<Payment>;
   getProofUrl(paymentId: string): Promise<string>;
-  getPendingPayments(): Promise<Payment[]>;
   verifyPayment(paymentId: string, action: 'approve' | 'reject', note?: string): Promise<Payment>;
   adminRecordPayment(input: { familyId: string; type: 'term' | 'individual_class'; childId?: string; sessionId?: string; note?: string }): Promise<Payment>;
 
@@ -87,44 +89,35 @@ export interface DataClient {
   saveAttendance(sessionId: string, records: Array<{ childId: string; status: AttendanceRecord['status'] }>): Promise<number>;
 
   // ── Messages ──────────────────────────────────────────────────────────────
-  getConversations(participantId: string): Promise<Conversation[]>;
+  getConversations(): Promise<Conversation[]>;
+  startConversation(kind: ConversationKind, target: { familyId?: string; teacherId?: string }): Promise<string>;
   getMessages(conversationId: string): Promise<ChatMessage[]>;
-  sendMessage(msg: Omit<ChatMessage, 'id' | 'created_at'>): Promise<ChatMessage>;
+  sendMessage(conversationId: string, body: string): Promise<ChatMessage>;
   markConversationRead(conversationId: string): Promise<void>;
 
-  // ── Notifications ─────────────────────────────────────────────────────────
-  getNotifications(familyId?: string, teacherId?: string): Promise<AppNotification[]>;
+  // ── Notifications & devices ───────────────────────────────────────────────
+  getNotifications(limit?: number): Promise<AppNotification[]>;
   markNotificationRead(notificationId: string): Promise<void>;
-  markAllNotificationsRead(familyId?: string, teacherId?: string): Promise<void>;
+  markAllNotificationsRead(): Promise<void>;
+  getNotificationPrefs(): Promise<Record<NotificationCategory, { push: boolean; inApp: boolean }>>;
+  setNotificationPref(category: NotificationCategory, v: { push?: boolean; inApp?: boolean }): Promise<void>;
+  registerDevice(token: string, platform: 'web' | 'ios' | 'android', meta?: { appVersion?: string; locale?: string }): Promise<void>;
+  unregisterDevice(token: string): Promise<void>;
 
   // ── Shop ──────────────────────────────────────────────────────────────────
   getShopProducts(): Promise<ShopProduct[]>;
   getShopOrders(familyId: string): Promise<ShopOrder[]>;
-  getAllShopOrders(): Promise<ShopOrder[]>;
-  placeOrder(
-    familyId: string,
-    familyName: string,
-    items: ShopCartItem[],
-    paymentMethod: 'cod' | 'advance',
-    delivery: { name: string; address: string; phone: string; email: string },
-    source: 'portal' | 'guest',
-    receiptFilename?: string
-  ): Promise<ShopOrder>;
-  verifyShopOrder(orderId: string, action: 'approve' | 'reject'): Promise<void>;
+  getAllShopOrders(opts?: { limit?: number; offset?: number }): Promise<ShopOrder[]>;
+  getShopStats(): Promise<ShopStats>;
+  placeOrder(input: PlaceOrderInput): Promise<PlacedOrder>;
+  verifyShopOrder(orderId: string, action: 'approve' | 'reject', note?: string): Promise<void>;
+  updateShopOrderStatus(orderId: string, status: ShopOrder['status'], note?: string): Promise<void>;
+  getShopReceiptUrl(orderId: string): Promise<string | null>;
+  getAdminShopProducts(): Promise<AdminShopProduct[]>;
+  upsertShopProduct(p: ShopProductInput): Promise<AdminShopProduct>;
+  uploadShopProductImage(productId: string, file: File): Promise<string>;
 
   // ── Admin ─────────────────────────────────────────────────────────────────
   getAdminStats(): Promise<AdminStats>;
   inviteStaff(input: { email: string; fullName: string; role: 'teacher' | 'admin'; subjects?: string[]; color?: string }): Promise<void>;
-  createFamily(input: { parentName: string; email?: string; phone?: string }): Promise<Family>;
-  adminMarkEnrolled(childId: string, note?: string): Promise<Child>;
-  adminAdjustCredits(termId: string, delta: number, note: string): Promise<Term>;
-
-  // ── Legacy (unmigrated phases) ────────────────────────────────────────────
-  getActiveTerm(familyId: string): Promise<Term | null>;
-  getClassInstances(): Promise<ClassInstance[]>;
-  createClassInstance(cls: Omit<ClassInstance, 'id' | 'enrolled'>): Promise<ClassInstance>;
-  updateClassInstance(id: string, patch: Partial<Omit<ClassInstance, 'id'>>): Promise<ClassInstance>;
-  deleteClassInstance(id: string): Promise<void>;
-  getIndividualPurchases(familyId: string): Promise<IndividualClassPurchase[]>;
-  createIndividualPurchase(purchase: Omit<IndividualClassPurchase, 'id'>): Promise<IndividualClassPurchase>;
 }

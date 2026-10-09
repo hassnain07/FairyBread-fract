@@ -1,14 +1,21 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { ShoppingBag, Search, X, Plus, Minus, ArrowRight, Check, Upload } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { dataClient } from '../../../lib/data/client';
+import { qk } from '../../../lib/data/queryKeys';
+import { toAppError } from '../../../lib/data/errors';
+import { formatMoney } from '../../../lib/utils/money';
+import { newId } from '../../../lib/utils/id';
+import { validateProof } from '../../payments/ProofUpload';
+import { useAuth } from '../../../app/providers';
 import type { ShopProduct, ShopCartItem } from '../../../types/shop';
 
 const IMG_COLORS = ['pink', 'teal', 'yellow', 'orange', 'green', 'pink'];
 const CATEGORIES = ['All', 'Workbooks', 'Flash Cards', 'Activity Kits'];
 
 function ProductImage({ product, index }: { product: ShopProduct; index: number }) {
+  if (product.image_url) return <img src={product.image_url} alt={product.title} className="shop-product-img" />;
   const color = IMG_COLORS[index % IMG_COLORS.length];
   const initials = product.title.split(' ').slice(0, 2).map(w => w[0]).join('');
   return <div className={`shop-product-img shop-img-${color}`}><span>{initials}</span></div>;
@@ -28,13 +35,15 @@ const EMPTY_FORM: GuestForm = { email: '', name: '', address: '', phone: '' };
 
 interface GuestCheckoutModalProps {
   cart: ShopCartItem[];
+  settings: any;
   onUpdateQty: (id: string, qty: number) => void;
   onRemove: (id: string) => void;
-  onSuccess: (orderId: string, email: string) => void;
+  onSuccess: (orderNumber: string, email: string) => void;
   onClose: () => void;
 }
 
-function GuestCheckoutModal({ cart, onUpdateQty, onRemove, onSuccess, onClose }: GuestCheckoutModalProps) {
+function GuestCheckoutModal({ cart, settings, onUpdateQty, onRemove, onSuccess, onClose }: GuestCheckoutModalProps) {
+  const orderId = useRef(newId());
   const [step, setStep] = useState<GuestStep>('cart');
   const [form, setForm] = useState<GuestForm>(EMPTY_FORM);
   const [formErrors, setFormErrors] = useState<Partial<GuestForm>>({});
@@ -42,13 +51,23 @@ function GuestCheckoutModal({ cart, onUpdateQty, onRemove, onSuccess, onClose }:
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState('');
 
-  const total = cart.reduce((s, i) => s + i.product.price * i.quantity, 0);
+  const total = cart.reduce((s, i) => s + i.product.price_cents * i.quantity, 0);
+  const bank = settings?.public_info?.bank;
   const currentIdx = STEP_ORDER.indexOf(step);
   const visibleSteps = paymentMethod === 'advance' ? STEP_ORDER : STEP_ORDER.filter(s => s !== 'proof');
 
   const mutation = useMutation({
-    mutationFn: () => dataClient.placeOrder('guest', form.name, cart, paymentMethod, form, 'guest', receiptFile?.name),
-    onSuccess: (order) => onSuccess(order.id, form.email),
+    mutationFn: () => dataClient.placeOrder!({
+      orderId: orderId.current,
+      source: 'guest',
+      items: cart.map(i => ({ productId: i.product.id, quantity: i.quantity })),
+      paymentMethod,
+      delivery: { name: form.name, address: form.address, phone: form.phone, email: form.email },
+      receipt: receiptFile,
+    }),
+    onSuccess: (placed) => {
+      onSuccess(placed.order_number, form.email);
+    },
   });
 
   function setField(field: keyof GuestForm, value: string) {
@@ -58,7 +77,7 @@ function GuestCheckoutModal({ cart, onUpdateQty, onRemove, onSuccess, onClose }:
 
   function validateDetails() {
     const e: Partial<GuestForm> = {};
-    if (!form.email.includes('@')) e.email = 'Please enter a valid email address.';
+    if (!form.email.includes('@') || !form.email.includes('.')) e.email = 'Please enter a valid email address.';
     if (!form.name.trim()) e.name = 'Full name is required.';
     if (!form.address.trim()) e.address = 'Delivery address is required.';
     if (!form.phone.trim()) e.phone = 'Phone number is required.';
@@ -79,6 +98,8 @@ function GuestCheckoutModal({ cart, onUpdateQty, onRemove, onSuccess, onClose }:
   function handleProofSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!receiptFile) { setFileError('Please upload your payment receipt.'); return; }
+    const bad = validateProof(receiptFile);
+    if (bad) { setFileError(bad); return; }
     setFileError('');
     mutation.mutate();
   }
@@ -86,7 +107,6 @@ function GuestCheckoutModal({ cart, onUpdateQty, onRemove, onSuccess, onClose }:
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal shop-cart-modal" onClick={e => e.stopPropagation()}>
-        {/* Step indicator */}
         <div className="guest-checkout-steps">
           {visibleSteps.map((s, i) => (
             <div key={s} className={`guest-step${i < currentIdx ? ' done' : i === currentIdx ? ' active' : ''}`}>
@@ -101,7 +121,6 @@ function GuestCheckoutModal({ cart, onUpdateQty, onRemove, onSuccess, onClose }:
           <button className="modal-close" onClick={onClose}><X size={18} /></button>
         </div>
 
-        {/* Cart */}
         {step === 'cart' && (
           <>
             {cart.length === 0 ? (
@@ -113,20 +132,20 @@ function GuestCheckoutModal({ cart, onUpdateQty, onRemove, onSuccess, onClose }:
                     <div key={item.product.id} className="shop-cart-row">
                       <div className="shop-cart-row-info">
                         <strong>{item.product.title}</strong>
-                        <span>${item.product.price.toFixed(2)} each</span>
+                        <span>{formatMoney(item.product.price_cents)} each</span>
                       </div>
                       <div className="shop-qty-ctrl">
                         <button onClick={() => onUpdateQty(item.product.id, item.quantity - 1)}><Minus size={13} /></button>
                         <span>{item.quantity}</span>
                         <button onClick={() => onUpdateQty(item.product.id, item.quantity + 1)}><Plus size={13} /></button>
                       </div>
-                      <div className="shop-cart-row-total">${(item.product.price * item.quantity).toFixed(2)}</div>
+                      <div className="shop-cart-row-total">{formatMoney(item.product.price_cents * item.quantity)}</div>
                       <button className="shop-cart-remove" onClick={() => onRemove(item.product.id)}><X size={14} /></button>
                     </div>
                   ))}
                 </div>
                 <div className="shop-cart-footer">
-                  <div className="shop-cart-total"><span>Total</span><strong>${total.toFixed(2)}</strong></div>
+                  <div className="shop-cart-total"><span>Total</span><strong>{formatMoney(total)}</strong></div>
                   <button className="btn btn-primary" onClick={() => setStep('details')}>Continue <ArrowRight size={15} /></button>
                 </div>
               </>
@@ -134,18 +153,17 @@ function GuestCheckoutModal({ cart, onUpdateQty, onRemove, onSuccess, onClose }:
           </>
         )}
 
-        {/* Details */}
         {step === 'details' && (
           <form onSubmit={handleDetailsNext} noValidate style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {([
-              { field: 'email' as const, label: 'Email address', type: 'email', placeholder: 'you@example.com' },
-              { field: 'name' as const, label: 'Full name', type: 'text', placeholder: 'Sarah Johnson' },
-              { field: 'address' as const, label: 'Delivery address', type: 'text', placeholder: '123 Main St, Sydney NSW 2000' },
-              { field: 'phone' as const, label: 'Phone number', type: 'tel', placeholder: '04xx xxx xxx' },
-            ]).map(({ field, label, type, placeholder }) => (
+              { field: 'email' as const, label: 'Email address', type: 'email' },
+              { field: 'name' as const, label: 'Full name', type: 'text' },
+              { field: 'address' as const, label: 'Delivery address', type: 'text' },
+              { field: 'phone' as const, label: 'Phone number', type: 'tel' },
+            ]).map(({ field, label, type }) => (
               <div key={field} className="auth-field">
                 <label>{label}</label>
-                <input type={type} placeholder={placeholder} value={form[field]} onChange={e => setField(field, e.target.value)} />
+                <input type={type} value={form[field]} onChange={e => setField(field, e.target.value)} />
                 {formErrors[field] && <span className="auth-field-error">{formErrors[field]}</span>}
               </div>
             ))}
@@ -156,7 +174,6 @@ function GuestCheckoutModal({ cart, onUpdateQty, onRemove, onSuccess, onClose }:
           </form>
         )}
 
-        {/* Payment */}
         {step === 'payment' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div className="checkout-method-options">
@@ -178,19 +195,22 @@ function GuestCheckoutModal({ cart, onUpdateQty, onRemove, onSuccess, onClose }:
                 {!mutation.isPending && <ArrowRight size={15} />}
               </button>
             </div>
-            {mutation.isError && <p className="auth-error"><span>{(mutation.error as Error).message}</span></p>}
+            {mutation.isError && <p className="auth-error"><span>{toAppError(mutation.error).message}</span></p>}
           </div>
         )}
 
-        {/* Proof */}
         {step === 'proof' && (
           <form onSubmit={handleProofSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div className="card" style={{ background: 'var(--surface)', padding: '14px 16px', fontSize: 14 }}>
-              <strong>Bank transfer details</strong>
-              <p style={{ margin: '6px 0 0', color: 'var(--muted)' }}>BSB: 000-000 · Account: 12345678 · Reference: GUEST-SHOP</p>
-            </div>
+            {bank && (
+              <div className="card" style={{ background: 'var(--surface)', padding: '14px 16px', fontSize: 14 }}>
+                <strong>Bank transfer details</strong>
+                <p style={{ margin: '6px 0 0', color: 'var(--muted)' }}>
+                  {bank.name && <>{bank.name} · </>}BSB: {bank.bsb} · Account: {bank.account} · Reference: GUEST-SHOP
+                </p>
+              </div>
+            )}
             <div className="auth-field">
-              <label>Upload receipt <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(image or PDF)</span></label>
+              <label>Upload receipt <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(image or PDF, max 10 MB)</span></label>
               <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', border: '2px dashed var(--line)', borderRadius: 10 }}>
                 <Upload size={16} />
                 <span>{receiptFile ? receiptFile.name : 'Click to upload'}</span>
@@ -204,7 +224,7 @@ function GuestCheckoutModal({ cart, onUpdateQty, onRemove, onSuccess, onClose }:
                 {mutation.isPending ? 'Placing order…' : 'Place order'} {!mutation.isPending && <ArrowRight size={15} />}
               </button>
             </div>
-            {mutation.isError && <p className="auth-error"><span>{(mutation.error as Error).message}</span></p>}
+            {mutation.isError && <p className="auth-error"><span>{toAppError(mutation.error).message}</span></p>}
           </form>
         )}
       </div>
@@ -212,13 +232,13 @@ function GuestCheckoutModal({ cart, onUpdateQty, onRemove, onSuccess, onClose }:
   );
 }
 
-function OrderSuccess({ orderId, email, onContinue }: { orderId: string; email: string; onContinue: () => void }) {
+function OrderSuccess({ orderNumber, email, onContinue }: { orderNumber: string; email: string; onContinue: () => void }) {
   return (
     <div className="public-shop-success">
       <div className="public-shop-success-icon"><Check size={32} /></div>
       <h2>Order placed!</h2>
       <p>Thanks for your order. We'll be in touch at <strong>{email}</strong> with updates.</p>
-      <div className="public-shop-success-id">Order ID: {orderId}</div>
+      <div className="public-shop-success-id">Order {orderNumber}</div>
       <button className="btn btn-primary" onClick={onContinue}>Continue shopping</button>
     </div>
   );
@@ -226,16 +246,22 @@ function OrderSuccess({ orderId, email, onContinue }: { orderId: string; email: 
 
 export function PublicShopPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All');
   const [cart, setCart] = useState<ShopCartItem[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<{ product: ShopProduct; index: number } | null>(null);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
-  const [successInfo, setSuccessInfo] = useState<{ orderId: string; email: string } | null>(null);
+  const [successInfo, setSuccessInfo] = useState<{ orderNumber: string; email: string } | null>(null);
 
   const { data: products = [], isLoading, isError } = useQuery({
-    queryKey: ['shopProducts'],
-    queryFn: () => dataClient.getShopProducts(),
+    queryKey: qk.shopProducts,
+    queryFn: () => dataClient.getShopProducts!(),
+  });
+
+  const { data: settings = {} } = useQuery({
+    queryKey: qk.settings,
+    queryFn: () => dataClient.getSettings!(),
   });
 
   const filtered = products.filter(p => {
@@ -244,17 +270,19 @@ export function PublicShopPage() {
     return matchCat && matchSearch;
   });
 
+  const maxQty = (settings as any)?.shop?.max_qty_per_line ?? 10;
+
   function addToCart(product: ShopProduct) {
     setCart(c => {
       const existing = c.find(i => i.product.id === product.id);
-      if (existing) return c.map(i => i.product.id === product.id ? { ...i, quantity: i.quantity + 1 } : i);
+      if (existing) return c.map(i => i.product.id === product.id ? { ...i, quantity: Math.min(i.quantity + 1, maxQty) } : i);
       return [...c, { product, quantity: 1 }];
     });
   }
 
   function updateQty(productId: string, qty: number) {
     if (qty <= 0) { setCart(c => c.filter(i => i.product.id !== productId)); return; }
-    setCart(c => c.map(i => i.product.id === productId ? { ...i, quantity: qty } : i));
+    setCart(c => c.map(i => i.product.id === productId ? { ...i, quantity: Math.min(qty, maxQty) } : i));
   }
 
   function removeFromCart(productId: string) {
@@ -274,14 +302,17 @@ export function PublicShopPage() {
           <nav>
             <a href="/#how">How it works</a>
             <a href="/#why">Why fairybread?</a>
-            <a href="/shop" style={{ color: 'var(--pink)', fontWeight: 700 }}>Shop</a>
+            <Link to="/shop" style={{ color: 'var(--pink)', fontWeight: 700 }}>Shop</Link>
           </nav>
           <div className="top-actions">
-            <button className="btn btn-ghost" onClick={() => navigate('/login')}>Sign in <ArrowRight size={15} /></button>
+            {user
+              ? <Link to="/parent/shop" className="btn btn-ghost">Go to portal shop <ArrowRight size={15} /></Link>
+              : <button className="btn btn-ghost" onClick={() => navigate('/login')}>Sign in <ArrowRight size={15} /></button>
+            }
           </div>
         </header>
         <main style={{ padding: '60px 24px' }}>
-          <OrderSuccess orderId={successInfo.orderId} email={successInfo.email} onContinue={() => setSuccessInfo(null)} />
+          <OrderSuccess orderNumber={successInfo.orderNumber} email={successInfo.email} onContinue={() => setSuccessInfo(null)} />
         </main>
       </div>
     );
@@ -297,10 +328,13 @@ export function PublicShopPage() {
         <nav>
           <a href="/#how">How it works</a>
           <a href="/#why">Why fairybread?</a>
-          <a href="/shop" style={{ color: 'var(--pink)', fontWeight: 700 }}>Shop</a>
+          <Link to="/shop" style={{ color: 'var(--pink)', fontWeight: 700 }}>Shop</Link>
         </nav>
         <div className="top-actions">
-          <button className="btn btn-ghost" onClick={() => navigate('/login')}>Sign in <ArrowRight size={15} /></button>
+          {user
+            ? <Link to="/parent/shop" className="btn btn-ghost">Portal shop <ArrowRight size={15} /></Link>
+            : <button className="btn btn-ghost" onClick={() => navigate('/login')}>Sign in <ArrowRight size={15} /></button>
+          }
           <button className="shop-cart-btn" onClick={() => cartCount > 0 && setCheckoutOpen(true)}>
             <ShoppingBag size={18} />
             {cartCount > 0 && <span className="shop-cart-badge">{cartCount}</span>}
@@ -331,7 +365,7 @@ export function PublicShopPage() {
           </div>
 
           {isLoading && <p style={{ color: 'var(--muted)', padding: '24px 0' }}>Loading products…</p>}
-          {isError && <p className="auth-error"><span>Failed to load products.</span></p>}
+          {isError && <p className="auth-error"><span>Failed to load products. Please try again.</span></p>}
           {!isLoading && !isError && filtered.length === 0 && (
             <div className="shop-empty"><ShoppingBag size={32} /><p>No products match your search.</p></div>
           )}
@@ -350,7 +384,7 @@ export function PublicShopPage() {
                       <button className="shop-card-title" onClick={() => setSelectedProduct({ product, index: i })}>{product.title}</button>
                       <p className="shop-card-desc">{product.description}</p>
                       <div className="shop-card-footer">
-                        <span className="shop-card-price">${product.price.toFixed(2)}</span>
+                        <span className="shop-card-price">{formatMoney(product.price_cents)}</span>
                         <div className="shop-card-actions">
                           <button className="shop-view-btn" onClick={() => setSelectedProduct({ product, index: i })}>Details</button>
                           {product.status !== 'Out of Stock' ? (
@@ -369,18 +403,18 @@ export function PublicShopPage() {
             </div>
           )}
 
-          {/* Upsell */}
-          <div className="public-shop-upsell">
-            <div className="public-shop-upsell-text">
-              <strong>Already a Fairybread family?</strong>
-              <span>Sign in to your portal to track orders and manage your account.</span>
+          {!user && (
+            <div className="public-shop-upsell">
+              <div className="public-shop-upsell-text">
+                <strong>Already a Fairybread family?</strong>
+                <span>Sign in to your portal to track orders and manage your account.</span>
+              </div>
+              <button className="btn btn-primary" onClick={() => navigate('/login')}>Sign in <ArrowRight size={15} /></button>
             </div>
-            <button className="btn btn-primary" onClick={() => navigate('/login')}>Sign in <ArrowRight size={15} /></button>
-          </div>
+          )}
         </div>
       </main>
 
-      {/* Product modal */}
       {selectedProduct && (
         <div className="modal-backdrop" onClick={() => setSelectedProduct(null)}>
           <div className="modal shop-detail-modal" onClick={e => e.stopPropagation()}>
@@ -393,7 +427,7 @@ export function PublicShopPage() {
               <p>{selectedProduct.product.details}</p>
             </div>
             <div className="shop-detail-meta">
-              <div className="shop-detail-price">${selectedProduct.product.price.toFixed(2)}</div>
+              <div className="shop-detail-price">{formatMoney(selectedProduct.product.price_cents)}</div>
               {selectedProduct.product.status !== 'Out of Stock' ? (
                 <button className="btn btn-primary" onClick={() => { addToCart(selectedProduct.product); setSelectedProduct(null); }}>
                   Add to cart
@@ -409,9 +443,10 @@ export function PublicShopPage() {
       {checkoutOpen && (
         <GuestCheckoutModal
           cart={cart}
+          settings={settings}
           onUpdateQty={updateQty}
           onRemove={removeFromCart}
-          onSuccess={(orderId, email) => { setCart([]); setCheckoutOpen(false); setSuccessInfo({ orderId, email }); }}
+          onSuccess={(orderNumber, email) => { setCart([]); setCheckoutOpen(false); setSuccessInfo({ orderNumber, email }); }}
           onClose={() => setCheckoutOpen(false)}
         />
       )}

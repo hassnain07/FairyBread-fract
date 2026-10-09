@@ -37,6 +37,7 @@ import { AdminMyTeachingPage } from '../features/admin/pages/AdminMyTeachingPage
 import { AdminTimetablePage } from '../features/admin/pages/AdminTimetablePage';
 import { AdminMessagesPage } from '../features/admin/pages/AdminMessagesPage';
 import { AdminOrdersPage } from '../features/admin/pages/AdminOrdersPage';
+import { AdminShopProductsPage } from '../features/admin/pages/AdminShopProductsPage';
 
 // Teacher pages
 import { TeacherDashboardPage } from '../features/teacher/pages/TeacherDashboardPage';
@@ -47,7 +48,7 @@ import { TeacherAssessmentsPage } from '../features/teacher/pages/TeacherAssessm
 import { TeacherMessagesPage } from '../features/teacher/pages/TeacherMessagesPage';
 import { TeacherReportsPage } from '../features/teacher/pages/TeacherReportsPage';
 
-const router = createBrowserRouter([
+export const router = createBrowserRouter([
   { path: '/', element: <LandingPage /> },
   { path: '/login', element: <LoginPage /> },
   { path: '/signup', element: <SignupPage /> },
@@ -93,6 +94,7 @@ const router = createBrowserRouter([
       { path: 'family-booking', element: <AdminFamilyBookingPage /> },
       { path: 'my-teaching', element: <AdminMyTeachingPage /> },
       { path: 'orders', element: <AdminOrdersPage /> },
+      { path: 'shop-products', element: <AdminShopProductsPage /> },
     ],
   }]},
   {

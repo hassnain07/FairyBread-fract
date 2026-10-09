@@ -10,7 +10,7 @@ export function useNotifications() {
 
   const q = useQuery({
     queryKey: qk.notifications,
-    queryFn: () => dataClient.getNotifications!(),
+    queryFn: () => dataClient.getNotifications!(50),
     enabled: !!user,
   });
 

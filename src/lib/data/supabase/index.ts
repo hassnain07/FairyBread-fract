@@ -11,6 +11,10 @@ import { createAssessmentsMethods } from './assessments';
 import { createReportsMethods } from './reports';
 import { createAttendanceMethods } from './attendance';
 import { createAdminMethods } from './admin';
+import { createMessagingMethods } from './messaging';
+import { createNotificationsMethods } from './notifications';
+
+import { createShopMethods } from './shop';
 
 export function createSupabaseDataClient(sb: AppSupabase): Partial<DataClient> {
   return {
@@ -25,5 +29,8 @@ export function createSupabaseDataClient(sb: AppSupabase): Partial<DataClient> {
     ...createReportsMethods(sb),
     ...createAttendanceMethods(sb),
     ...createAdminMethods(sb),
+    ...createMessagingMethods(sb),
+    ...createNotificationsMethods(sb),
+    ...createShopMethods(sb),
   };
 }

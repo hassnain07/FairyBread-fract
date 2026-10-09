@@ -58,15 +58,3 @@ export type ClassSlotInput = {
   capacity?: number;
   price_cents?: number;
 };
-
-// Legacy alias kept so pages that haven't been migrated yet still compile
-export type ClassInstance = {
-  id: string;
-  teacher_id: string;
-  subject: string;
-  day_of_week: string;
-  time: string;
-  capacity: number;
-  enrolled: number;
-  price: number;
-};

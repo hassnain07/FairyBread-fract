@@ -9,6 +9,8 @@ import {
   useState,
 } from 'react';
 import { dataClient } from '../lib/data/client';
+import { syncToken, disablePushForThisDevice } from '../lib/push/webPush';
+import { router } from './router';
 import type { AuthUser, Role } from '../types/auth';
 
 export const queryClient = new QueryClient({
@@ -73,9 +75,13 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
       signIn: async (email, password) => {
         const u = await dataClient.signIn!(email, password);
         setUser(u);
+        // Sync FCM token after login (no-op if permission not yet granted)
+        void syncToken().catch(() => {});
         return u;
       },
       signOut: async () => {
+        // Unregister device before clearing the session
+        await disablePushForThisDevice().catch(() => {});
         await dataClient.signOut!();
         setUser(null);
         queryClient.clear();
@@ -112,9 +118,25 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <ErrorBoundary>
+          <SwMessageHandler />
           {children}
         </ErrorBoundary>
       </AuthProvider>
     </QueryClientProvider>
   );
+}
+
+// Handles NAVIGATE messages posted by the service worker on notification click.
+function SwMessageHandler() {
+  useEffect(() => {
+    if (!navigator.serviceWorker) return;
+    const handler = (e: MessageEvent) => {
+      if (e.data?.type === 'NAVIGATE' && typeof e.data.url === 'string') {
+        void router.navigate(e.data.url);
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', handler);
+    return () => navigator.serviceWorker.removeEventListener('message', handler);
+  }, []);
+  return null;
 }

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { BookOpen, CalendarDays, CircleDollarSign, LayoutDashboard, Mail, PhoneCall, Presentation, Settings, ShoppingBag, Ticket, UserRound, Users } from 'lucide-react';
+import { BookOpen, CalendarDays, CircleDollarSign, LayoutDashboard, Mail, Package, PhoneCall, Presentation, Settings, ShoppingBag, Ticket, UserRound, Users } from 'lucide-react';
 import { AppShell } from '../../../components/layout/AppShell';
 
 const nav = [
@@ -15,6 +15,7 @@ const nav = [
   { id: '/admin/timetable', label: 'Timetable', icon: CalendarDays },
   { id: '/admin/programs', label: 'Programs', icon: BookOpen },
   { id: '/admin/orders', label: 'Shop orders', icon: ShoppingBag },
+  { id: '/admin/shop-products', label: 'Shop products', icon: Package },
   { id: '/admin/settings', label: 'Settings', icon: Settings },
 ];
 
@@ -30,6 +31,7 @@ const titles: Record<string, [string, string]> = {
   '/admin/timetable': ['Timetable', 'Build and manage the term class schedule.'],
   '/admin/programs': ['Programs', 'What we teach and who is learning.'],
   '/admin/orders': ['Shop orders', 'Review and manage learning shop orders.'],
+  '/admin/shop-products': ['Shop products', 'Manage the product catalogue, stock and images.'],
   '/admin/settings': ['Settings', 'Business details and notification preferences.'],
 };
 

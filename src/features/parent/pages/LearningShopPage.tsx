@@ -1,21 +1,23 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ShoppingBag, Search, X, Plus, Minus, ArrowRight, Check, Upload } from 'lucide-react';
 import { dataClient } from '../../../lib/data/client';
 import { useAuth } from '../../../app/providers';
+import { qk } from '../../../lib/data/queryKeys';
+import { toAppError } from '../../../lib/data/errors';
+import { formatMoney } from '../../../lib/utils/money';
+import { newId } from '../../../lib/utils/id';
+import { validateProof } from '../../payments/ProofUpload';
 import type { ShopProduct, ShopCartItem } from '../../../types/shop';
 
 const IMG_COLORS = ['pink', 'teal', 'yellow', 'orange', 'green', 'pink'];
 const CATEGORIES = ['All', 'Workbooks', 'Flash Cards', 'Activity Kits'];
 
 function ProductImage({ product, index }: { product: ShopProduct; index: number }) {
+  if (product.image_url) return <img src={product.image_url} alt={product.title} className="shop-product-img" />;
   const color = IMG_COLORS[index % IMG_COLORS.length];
   const initials = product.title.split(' ').slice(0, 2).map(w => w[0]).join('');
-  return (
-    <div className={`shop-product-img shop-img-${color}`}>
-      <span>{initials}</span>
-    </div>
-  );
+  return <div className={`shop-product-img shop-img-${color}`}><span>{initials}</span></div>;
 }
 
 function StatusBadge({ status }: { status: ShopProduct['status'] }) {
@@ -24,13 +26,9 @@ function StatusBadge({ status }: { status: ShopProduct['status'] }) {
 }
 
 interface ProductModalProps {
-  product: ShopProduct;
-  index: number;
-  cartQty: number;
-  onAdd: (p: ShopProduct) => void;
-  onClose: () => void;
+  product: ShopProduct; index: number; cartQty: number;
+  onAdd: (p: ShopProduct) => void; onClose: () => void;
 }
-
 function ProductModal({ product, index, cartQty, onAdd, onClose }: ProductModalProps) {
   const [qty, setQty] = useState(1);
   return (
@@ -45,7 +43,7 @@ function ProductModal({ product, index, cartQty, onAdd, onClose }: ProductModalP
           <p>{product.details}</p>
         </div>
         <div className="shop-detail-meta">
-          <div className="shop-detail-price">${product.price.toFixed(2)}</div>
+          <div className="shop-detail-price">{formatMoney(product.price_cents)}</div>
           {product.status !== 'Out of Stock' ? (
             <div className="shop-detail-actions">
               <div className="shop-qty-ctrl">
@@ -67,21 +65,20 @@ function ProductModal({ product, index, cartQty, onAdd, onClose }: ProductModalP
 }
 
 type CheckoutStep = 'cart' | 'delivery' | 'payment' | 'proof';
-
 interface DeliveryForm { name: string; address: string; phone: string; email: string; }
 const EMPTY_DELIVERY: DeliveryForm = { name: '', address: '', phone: '', email: '' };
 
 interface CheckoutModalProps {
-  cart: ShopCartItem[];
-  familyId: string;
+  cart: ShopCartItem[]; familyId: string; settings: any;
   onUpdateQty: (productId: string, qty: number) => void;
   onRemove: (productId: string) => void;
-  onSuccess: () => void;
+  onSuccess: (orderNumber: string) => void;
   onClose: () => void;
 }
 
-function CheckoutModal({ cart, familyId, onUpdateQty, onRemove, onSuccess, onClose }: CheckoutModalProps) {
+function CheckoutModal({ cart, familyId, settings, onUpdateQty, onRemove, onSuccess, onClose }: CheckoutModalProps) {
   const queryClient = useQueryClient();
+  const orderId = useRef(newId());
   const [step, setStep] = useState<CheckoutStep>('cart');
   const [delivery, setDelivery] = useState<DeliveryForm>(EMPTY_DELIVERY);
   const [deliveryErrors, setDeliveryErrors] = useState<Partial<DeliveryForm>>({});
@@ -89,21 +86,29 @@ function CheckoutModal({ cart, familyId, onUpdateQty, onRemove, onSuccess, onClo
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState('');
 
-  const total = cart.reduce((s, i) => s + i.product.price * i.quantity, 0);
+  const total = cart.reduce((s, i) => s + i.product.price_cents * i.quantity, 0);
+  const bank = (settings as any)?.public_info?.bank;
+  const refCode = (settings as any)?.reference_code ?? familyId.toUpperCase();
 
   const placeMutation = useMutation({
-    mutationFn: () => dataClient.placeOrder(
-      familyId,
-      delivery.name,
-      cart,
+    mutationFn: () => dataClient.placeOrder!({
+      orderId: orderId.current,
+      source: 'portal',
+      items: cart.map(i => ({ productId: i.product.id, quantity: i.quantity })),
       paymentMethod,
       delivery,
-      'portal',
-      receiptFile?.name,
-    ),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['shopOrders', familyId] });
-      onSuccess();
+      receipt: receiptFile,
+    }),
+    onSuccess: (placed) => {
+      queryClient.invalidateQueries({ queryKey: qk.shopOrders(familyId) });
+      queryClient.invalidateQueries({ queryKey: qk.shopProducts });
+      queryClient.invalidateQueries({ queryKey: qk.adminShopProducts });
+      queryClient.invalidateQueries({ queryKey: qk.shopStats });
+      onSuccess(placed.order_number);
+    },
+    onError: (e) => {
+      const err = toAppError(e);
+      if (err.code === 'out_of_stock') queryClient.invalidateQueries({ queryKey: qk.shopProducts });
     },
   });
 
@@ -124,16 +129,14 @@ function CheckoutModal({ cart, familyId, onUpdateQty, onRemove, onSuccess, onClo
   }
 
   function handlePaymentNext() {
-    if (paymentMethod === 'cod') {
-      placeMutation.mutate();
-    } else {
-      setStep('proof');
-    }
+    if (paymentMethod === 'cod') { placeMutation.mutate(); } else { setStep('proof'); }
   }
 
   function handleProofSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!receiptFile) { setFileError('Please upload your payment receipt.'); return; }
+    const bad = validateProof(receiptFile);
+    if (bad) { setFileError(bad); return; }
     setFileError('');
     placeMutation.mutate();
   }
@@ -143,9 +146,7 @@ function CheckoutModal({ cart, familyId, onUpdateQty, onRemove, onSuccess, onClo
     setDeliveryErrors(e => ({ ...e, [field]: undefined }));
   }
 
-  const STEP_LABELS: Record<CheckoutStep, string> = {
-    cart: 'Review cart', delivery: 'Delivery', payment: 'Payment', proof: 'Upload receipt',
-  };
+  const STEP_LABELS: Record<CheckoutStep, string> = { cart: 'Review cart', delivery: 'Delivery', payment: 'Payment', proof: 'Upload receipt' };
   const STEP_ORDER: CheckoutStep[] = ['cart', 'delivery', 'payment', 'proof'];
   const currentIdx = STEP_ORDER.indexOf(step);
 
@@ -157,7 +158,6 @@ function CheckoutModal({ cart, familyId, onUpdateQty, onRemove, onSuccess, onClo
           <button className="modal-close" onClick={onClose}><X size={18} /></button>
         </div>
 
-        {/* Step: cart */}
         {step === 'cart' && (
           <>
             {cart.length === 0 ? (
@@ -169,36 +169,33 @@ function CheckoutModal({ cart, familyId, onUpdateQty, onRemove, onSuccess, onClo
                     <div key={item.product.id} className="shop-cart-row">
                       <div className="shop-cart-row-info">
                         <strong>{item.product.title}</strong>
-                        <span>${item.product.price.toFixed(2)} each</span>
+                        <span>{formatMoney(item.product.price_cents)} each</span>
                       </div>
                       <div className="shop-qty-ctrl">
                         <button onClick={() => onUpdateQty(item.product.id, item.quantity - 1)}><Minus size={13} /></button>
                         <span>{item.quantity}</span>
                         <button onClick={() => onUpdateQty(item.product.id, item.quantity + 1)}><Plus size={13} /></button>
                       </div>
-                      <div className="shop-cart-row-total">${(item.product.price * item.quantity).toFixed(2)}</div>
+                      <div className="shop-cart-row-total">{formatMoney(item.product.price_cents * item.quantity)}</div>
                       <button className="shop-cart-remove" onClick={() => onRemove(item.product.id)}><X size={14} /></button>
                     </div>
                   ))}
                 </div>
                 <div className="shop-cart-footer">
-                  <div className="shop-cart-total"><span>Total</span><strong>${total.toFixed(2)}</strong></div>
-                  <button className="btn btn-primary" onClick={() => setStep('delivery')}>
-                    Continue <ArrowRight size={15} />
-                  </button>
+                  <div className="shop-cart-total"><span>Total</span><strong>{formatMoney(total)}</strong></div>
+                  <button className="btn btn-primary" onClick={() => setStep('delivery')}>Continue <ArrowRight size={15} /></button>
                 </div>
               </>
             )}
           </>
         )}
 
-        {/* Step: delivery */}
         {step === 'delivery' && (
           <form onSubmit={handleDeliveryNext} noValidate style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {(['name', 'address', 'phone'] as const).map(field => (
               <div key={field} className="auth-field">
-                <label htmlFor={`del-${field}`} style={{ textTransform: 'capitalize' }}>{field === 'name' ? 'Full name' : field === 'address' ? 'Delivery address' : 'Phone number'}</label>
-                <input id={`del-${field}`} type={field === 'phone' ? 'tel' : 'text'} value={delivery[field]} onChange={e => setField(field, e.target.value)} placeholder={field === 'name' ? 'Sarah Johnson' : field === 'address' ? '123 Main St, Sydney NSW 2000' : '04xx xxx xxx'} />
+                <label htmlFor={`del-${field}`}>{field === 'name' ? 'Full name' : field === 'address' ? 'Delivery address' : 'Phone number'}</label>
+                <input id={`del-${field}`} type={field === 'phone' ? 'tel' : 'text'} value={delivery[field]} onChange={e => setField(field, e.target.value)} />
                 {deliveryErrors[field] && <span className="auth-field-error">{deliveryErrors[field]}</span>}
               </div>
             ))}
@@ -209,10 +206,8 @@ function CheckoutModal({ cart, familyId, onUpdateQty, onRemove, onSuccess, onClo
           </form>
         )}
 
-        {/* Step: payment */}
         {step === 'payment' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <p style={{ color: 'var(--muted)', fontSize: 14 }}>How would you like to pay?</p>
             <div className="checkout-method-options">
               {(['cod', 'advance'] as const).map(m => (
                 <button key={m} className={`checkout-method-btn${paymentMethod === m ? ' active' : ''}`} onClick={() => setPaymentMethod(m)}>
@@ -232,19 +227,22 @@ function CheckoutModal({ cart, familyId, onUpdateQty, onRemove, onSuccess, onClo
                 {!placeMutation.isPending && <ArrowRight size={15} />}
               </button>
             </div>
-            {placeMutation.isError && <p className="auth-error"><span>{(placeMutation.error as Error).message}</span></p>}
+            {placeMutation.isError && <p className="auth-error"><span>{toAppError(placeMutation.error).message}</span></p>}
           </div>
         )}
 
-        {/* Step: proof (advance only) */}
         {step === 'proof' && (
           <form onSubmit={handleProofSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div className="card" style={{ background: 'var(--surface)', padding: '14px 16px', fontSize: 14 }}>
-              <strong>Bank transfer details</strong>
-              <p style={{ margin: '6px 0 0', color: 'var(--muted)' }}>BSB: 000-000 · Account: 12345678 · Reference: {familyId.toUpperCase()}-SHOP</p>
-            </div>
+            {bank && (
+              <div className="card" style={{ background: 'var(--surface)', padding: '14px 16px', fontSize: 14 }}>
+                <strong>Bank transfer details</strong>
+                <p style={{ margin: '6px 0 0', color: 'var(--muted)' }}>
+                  {bank.name && <>{bank.name} · </>}BSB: {bank.bsb} · Account: {bank.account} · Reference: {refCode}-SHOP
+                </p>
+              </div>
+            )}
             <div className="auth-field">
-              <label>Upload receipt <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(image or PDF)</span></label>
+              <label>Upload receipt <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(image or PDF, max 10 MB)</span></label>
               <label className="upload-area" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', border: '2px dashed var(--line)', borderRadius: 10 }}>
                 <Upload size={16} />
                 <span>{receiptFile ? receiptFile.name : 'Click to upload'}</span>
@@ -258,11 +256,10 @@ function CheckoutModal({ cart, familyId, onUpdateQty, onRemove, onSuccess, onClo
                 {placeMutation.isPending ? 'Placing order…' : 'Place order'} {!placeMutation.isPending && <ArrowRight size={15} />}
               </button>
             </div>
-            {placeMutation.isError && <p className="auth-error"><span>{(placeMutation.error as Error).message}</span></p>}
+            {placeMutation.isError && <p className="auth-error"><span>{toAppError(placeMutation.error).message}</span></p>}
           </form>
         )}
 
-        {/* Step indicator */}
         <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginTop: 16 }}>
           {STEP_ORDER.filter(s => s !== 'proof' || paymentMethod === 'advance').map((s, i) => (
             <span key={s} style={{ width: 8, height: 8, borderRadius: '50%', background: i <= currentIdx ? 'var(--teal)' : 'var(--line)' }} />
@@ -280,11 +277,16 @@ export function LearningShopPage() {
   const [cart, setCart] = useState<ShopCartItem[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<{ product: ShopProduct; index: number } | null>(null);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
-  const [successToast, setSuccessToast] = useState(false);
+  const [successOrderNumber, setSuccessOrderNumber] = useState('');
 
   const { data: products = [], isLoading, isError } = useQuery({
-    queryKey: ['shopProducts'],
-    queryFn: () => dataClient.getShopProducts(),
+    queryKey: qk.shopProducts,
+    queryFn: () => dataClient.getShopProducts!(),
+  });
+
+  const { data: settings = {} } = useQuery({
+    queryKey: qk.settings,
+    queryFn: () => dataClient.getSettings!(),
   });
 
   const filtered = products.filter(p => {
@@ -294,16 +296,18 @@ export function LearningShopPage() {
   });
 
   function addToCart(product: ShopProduct) {
+    const maxQtyPerLine = (settings as any)?.shop?.max_qty_per_line ?? 10;
     setCart(c => {
       const existing = c.find(i => i.product.id === product.id);
-      if (existing) return c.map(i => i.product.id === product.id ? { ...i, quantity: i.quantity + 1 } : i);
+      if (existing) return c.map(i => i.product.id === product.id ? { ...i, quantity: Math.min(i.quantity + 1, maxQtyPerLine) } : i);
       return [...c, { product, quantity: 1 }];
     });
   }
 
   function updateQty(productId: string, qty: number) {
-    if (qty <= 0) { removeFromCart(productId); return; }
-    setCart(c => c.map(i => i.product.id === productId ? { ...i, quantity: qty } : i));
+    const maxQtyPerLine = (settings as any)?.shop?.max_qty_per_line ?? 10;
+    if (qty <= 0) { setCart(c => c.filter(i => i.product.id !== productId)); return; }
+    setCart(c => c.map(i => i.product.id === productId ? { ...i, quantity: Math.min(qty, maxQtyPerLine) } : i));
   }
 
   function removeFromCart(productId: string) {
@@ -312,16 +316,15 @@ export function LearningShopPage() {
 
   const cartCount = cart.reduce((s, i) => s + i.quantity, 0);
 
-  function handleOrderSuccess() {
+  function handleOrderSuccess(orderNumber: string) {
     setCart([]);
     setCheckoutOpen(false);
-    setSuccessToast(true);
-    setTimeout(() => setSuccessToast(false), 5000);
+    setSuccessOrderNumber(orderNumber);
+    setTimeout(() => setSuccessOrderNumber(''), 6000);
   }
 
   return (
     <div className="page-stack">
-      {/* Banner */}
       <div className="shop-banner">
         <div className="shop-banner-text">
           <h2>Learning Shop</h2>
@@ -334,14 +337,12 @@ export function LearningShopPage() {
         </button>
       </div>
 
-      {/* Success toast */}
-      {successToast && (
+      {successOrderNumber && (
         <div className="shop-order-success">
-          <Check size={16} /> Order placed! We'll be in touch soon.
+          <Check size={16} /> Order {successOrderNumber} placed! We'll be in touch soon.
         </div>
       )}
 
-      {/* Toolbar */}
       <div className="shop-toolbar">
         <div className="shop-search-wrap">
           <Search size={15} className="shop-search-icon" />
@@ -354,7 +355,6 @@ export function LearningShopPage() {
         </div>
       </div>
 
-      {/* Grid */}
       {isLoading && <p style={{ color: 'var(--muted)', padding: '24px 0' }}>Loading products…</p>}
       {isError && <p className="auth-error"><span>Failed to load products. Please try again.</span></p>}
       {!isLoading && !isError && filtered.length === 0 && (
@@ -375,7 +375,7 @@ export function LearningShopPage() {
                   <button className="shop-card-title" onClick={() => setSelectedProduct({ product, index: i })}>{product.title}</button>
                   <p className="shop-card-desc">{product.description}</p>
                   <div className="shop-card-footer">
-                    <span className="shop-card-price">${product.price.toFixed(2)}</span>
+                    <span className="shop-card-price">{formatMoney(product.price_cents)}</span>
                     <div className="shop-card-actions">
                       <button className="shop-view-btn" onClick={() => setSelectedProduct({ product, index: i })}>Details</button>
                       {product.status !== 'Out of Stock' ? (
@@ -394,26 +394,19 @@ export function LearningShopPage() {
         </div>
       )}
 
-      {/* Product modal */}
       {selectedProduct && (
         <ProductModal
-          product={selectedProduct.product}
-          index={selectedProduct.index}
+          product={selectedProduct.product} index={selectedProduct.index}
           cartQty={cart.find(c => c.product.id === selectedProduct.product.id)?.quantity ?? 0}
-          onAdd={addToCart}
-          onClose={() => setSelectedProduct(null)}
+          onAdd={addToCart} onClose={() => setSelectedProduct(null)}
         />
       )}
 
-      {/* Checkout modal */}
       {checkoutOpen && (
         <CheckoutModal
-          cart={cart}
-          familyId={familyId}
-          onUpdateQty={updateQty}
-          onRemove={removeFromCart}
-          onSuccess={handleOrderSuccess}
-          onClose={() => setCheckoutOpen(false)}
+          cart={cart} familyId={familyId} settings={settings}
+          onUpdateQty={updateQty} onRemove={removeFromCart}
+          onSuccess={handleOrderSuccess} onClose={() => setCheckoutOpen(false)}
         />
       )}
     </div>

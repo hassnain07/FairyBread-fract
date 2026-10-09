@@ -3,7 +3,9 @@ import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '../../../components/ui/Button';
 import { dataClient } from '../../../lib/data/client';
+import { qk } from '../../../lib/data/queryKeys';
 import { useAuth } from '../../../app/providers';
+import { toAppError } from '../../../lib/data/errors';
 import type { Conversation } from '../../../types/message';
 
 function timeLabel(iso: string) {
@@ -24,49 +26,53 @@ export function MessagesPage() {
   const qc = useQueryClient();
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  const [error, setError] = useState('');
   const bodyRef = useRef<HTMLDivElement>(null);
 
+  // Auto-create support thread on first visit
+  useEffect(() => {
+    if (!familyId) return;
+    dataClient.startConversation!('parent_staff', { familyId })
+      .then(() => qc.invalidateQueries({ queryKey: qk.conversations }))
+      .catch(() => {});
+  }, [familyId, qc]);
+
   const { data: conversations = [] } = useQuery({
-    queryKey: ['conversations', familyId],
-    queryFn: () => dataClient.getConversations(familyId),
+    queryKey: qk.conversations,
+    queryFn: () => dataClient.getConversations!(),
+    enabled: !!familyId,
   });
 
-  // Default to first conversation
   const convId = activeConvId ?? conversations[0]?.id ?? null;
   const activeConv: Conversation | undefined = conversations.find(c => c.id === convId);
 
   const { data: messages = [] } = useQuery({
-    queryKey: ['messages', convId],
-    queryFn: () => convId ? dataClient.getMessages(convId) : Promise.resolve([]),
+    queryKey: qk.messages(convId ?? ''),
+    queryFn: () => convId ? dataClient.getMessages!(convId) : Promise.resolve([]),
     enabled: !!convId,
   });
 
-  // Mark read when switching conversation
   useEffect(() => {
     if (convId) {
-      dataClient.markConversationRead(convId).then(() =>
-        qc.invalidateQueries({ queryKey: ['conversations', familyId] })
+      dataClient.markConversationRead!(convId).then(() =>
+        qc.invalidateQueries({ queryKey: qk.conversations })
       );
     }
-  }, [convId, familyId, qc]);
+  }, [convId, qc]);
 
-  // Scroll to bottom on new messages
   useEffect(() => {
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages.length]);
 
   const send = useMutation({
-    mutationFn: () => dataClient.sendMessage({
-      conversation_id: convId!,
-      sender_role: 'parent',
-      sender_name: 'Sarah Johnson',
-      body: draft.trim(),
-    }),
+    mutationFn: () => dataClient.sendMessage!(convId!, draft.trim()),
     onSuccess: () => {
       setDraft('');
-      qc.invalidateQueries({ queryKey: ['messages', convId] });
-      qc.invalidateQueries({ queryKey: ['conversations', familyId] });
+      setError('');
+      qc.invalidateQueries({ queryKey: qk.messages(convId!) });
+      qc.invalidateQueries({ queryKey: qk.conversations });
     },
+    onError: (e: Error) => setError(toAppError(e).message),
   });
 
   function handleSend() {
@@ -74,51 +80,46 @@ export function MessagesPage() {
     send.mutate();
   }
 
-  // Determine other participant's name/color for the chat header
-  const otherName = activeConv?.participant_names.find((_, i) => activeConv.participant_roles[i] !== 'parent') ?? '';
-  const otherInitials = otherName.split(' ').map(x => x[0]).join('').slice(0, 2);
+  const otherInitials = activeConv?.title.split(' ').map(x => x[0]).join('').slice(0, 2) ?? '';
 
   return (
     <div className="page-stack messages-layout">
-      {/* Conversation list */}
       <div className="card conversation-list">
         <div className="card-heading">
           <div><span className="label">Inbox</span><h3>Messages</h3></div>
-          <Button variant="soft" icon={Plus}>New</Button>
+          <Button variant="soft" icon={Plus} onClick={() => familyId && dataClient.startConversation!('parent_staff', { familyId }).then(() => qc.invalidateQueries({ queryKey: qk.conversations }))}>New</Button>
         </div>
         <div className="conversation-scroll">
-        {conversations.map(conv => {
-          const other = conv.participant_names.find((_, i) => conv.participant_roles[i] !== 'parent') ?? conv.participant_names[0];
-          const initials = other.split(' ').map(x => x[0]).join('').slice(0, 2);
-          return (
-            <button
-              key={conv.id}
-              className={`conversation ${conv.id === convId ? 'active' : ''}`}
-              onClick={() => setActiveConvId(conv.id)}
-            >
-              <div className={`mini-avatar ${conv.avatar_color}-bg`}>{initials}</div>
-              <div>
-                <strong>{other}</strong>
-                <span>{conv.last_message}</span>
-                {conv.unread_count > 0 && (
-                  <span className="reminder-pill"><Bell size={11} />{conv.unread_count} new</span>
-                )}
-              </div>
-              <small>{timeLabel(conv.last_message_at)}</small>
-            </button>
-          );
-        })}
+          {conversations.map(conv => {
+            const initials = conv.title.split(' ').map(x => x[0]).join('').slice(0, 2);
+            return (
+              <button
+                key={conv.id}
+                className={`conversation ${conv.id === convId ? 'active' : ''}`}
+                onClick={() => setActiveConvId(conv.id)}
+              >
+                <div className={`mini-avatar ${conv.avatar_color}-bg`}>{initials}</div>
+                <div>
+                  <strong>{conv.title}</strong>
+                  <span>{conv.last_message}</span>
+                  {conv.unread_count > 0 && (
+                    <span className="reminder-pill"><Bell size={11} />{conv.unread_count} new</span>
+                  )}
+                </div>
+                <small>{timeLabel(conv.last_message_at)}</small>
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Chat window */}
       <div className="card chat-window">
         {activeConv ? (
           <>
             <div className="chat-head">
               <div className={`mini-avatar ${activeConv.avatar_color}-bg`}>{otherInitials}</div>
               <div>
-                <strong>{otherName}</strong>
+                <strong>{activeConv.title}</strong>
                 <span>Typically replies within a day</span>
               </div>
               <MoreHorizontal size={18} />
@@ -139,6 +140,7 @@ export function MessagesPage() {
                 );
               })}
             </div>
+            {error && <p className="auth-error" style={{ margin: '0 12px' }}>{error}</p>}
             <div className="chat-input">
               <input
                 placeholder="Write a message..."
@@ -146,7 +148,7 @@ export function MessagesPage() {
                 onChange={e => setDraft(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
               />
-              <button onClick={handleSend} disabled={!draft.trim()}>
+              <button onClick={handleSend} disabled={!draft.trim() || send.isPending}>
                 <ArrowRight size={17} />
               </button>
             </div>
