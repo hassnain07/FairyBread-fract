@@ -5,6 +5,7 @@ import { Button } from '../../../components/ui/Button';
 import { SprinkleField } from '../../../components/ui/Sprinkles';
 import { dataClient } from '../../../lib/data/client';
 import { useAuth } from '../../../app/providers';
+import { qk } from '../../../lib/data/queryKeys';
 
 const STAR_LABELS = ['', '★', '★★', '★★★', '★★★★', '★★★★★'];
 const EMPTY_STARS = ['', '★★★★★', '★★★★', '★★★', '★★', '★'];
@@ -14,35 +15,28 @@ export function ReportsPage() {
   const { childId } = useParams<{ childId?: string }>();
 
   const { data: children = [] } = useQuery({
-    queryKey: ['children', familyId],
+    queryKey: qk.children(familyId),
     queryFn: () => dataClient.getChildren(familyId),
+    enabled: !!familyId,
   });
 
-  // Find the target child — use URL param if present, else first child
   const child = (childId ? children.find(c => c.id === childId) : null) ?? children[0];
 
-  // Reports are stored by teacher_id; fetch all teachers then all their reports
   const { data: teachers = [] } = useQuery({
-    queryKey: ['teachers'],
+    queryKey: qk.teachers,
     queryFn: () => dataClient.getTeachers(),
   });
 
-  const { data: allReports = [], isLoading } = useQuery({
-    queryKey: ['allReports', teachers.map(t => t.id).join(',')],
-    queryFn: async () => {
-      const results = await Promise.all(teachers.map(t => dataClient.getReports(t.id)));
-      return results.flat();
-    },
-    enabled: teachers.length > 0,
+  const { data: childReports = [], isLoading } = useQuery({
+    queryKey: qk.reports(child?.id ?? ''),
+    queryFn: () => dataClient.getReportsForChild(child!.id),
+    enabled: !!child?.id,
   });
 
-  // Filter to reports for this child
-  const childReports = child ? allReports.filter(r => r.child_id === child.id) : [];
   const latest = childReports[childReports.length - 1] ?? null;
 
   if (isLoading) return <div className="page-stack"><p>Loading…</p></div>;
 
-  // No reports yet — show placeholder
   if (!latest) {
     return (
       <div className="page-stack">
@@ -58,9 +52,10 @@ export function ReportsPage() {
     );
   }
 
-  const overallPct = ((latest.overall / 5) * 100).toFixed(0);
   const stars = STAR_LABELS[latest.overall] ?? '';
   const emptyStars = EMPTY_STARS[latest.overall] ?? '';
+  const tutorName = teachers.find(t => t.id === latest.teacher_id)?.name ?? 'Your tutor';
+  const tutorInitials = teachers.find(t => t.id === latest.teacher_id)?.initials ?? 'T';
 
   return (
     <div className="page-stack">
@@ -100,13 +95,8 @@ export function ReportsPage() {
           <span className="label">Tutor note</span>
           <p>"{latest.note}"</p>
           <div className="tutor-mini">
-            <div className="mini-avatar pink-bg">
-              {teachers.find(t => t.id === latest.teacher_id)?.initials ?? 'T'}
-            </div>
-            <small>
-              {teachers.find(t => t.id === latest.teacher_id)?.name ?? 'Your tutor'}<br />
-              <b>{child?.name.split(' ')[0]}'s tutor</b>
-            </small>
+            <div className="mini-avatar pink-bg">{tutorInitials}</div>
+            <small>{tutorName}<br /><b>{child?.name.split(' ')[0]}'s tutor</b></small>
           </div>
         </div>
 
@@ -127,7 +117,6 @@ export function ReportsPage() {
         )}
       </div>
 
-      {/* Previous reports */}
       {childReports.length > 1 && (
         <div className="card">
           <div className="card-heading"><div><span className="label">Report history</span><h3>Previous terms</h3></div></div>

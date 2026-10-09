@@ -1,65 +1,61 @@
-import { Check, ChevronRight, Download, X } from 'lucide-react';
+import { Download, X } from 'lucide-react';
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '../../../components/ui/Button';
+import { Toggle } from '../../../components/ui/Toggle';
 import { dataClient } from '../../../lib/data/client';
+import { qk } from '../../../lib/data/queryKeys';
+import { toAppError } from '../../../lib/data/errors';
+import type { ClassBooking } from '../../../types/booking';
 
-const ALL_FAMILY_IDS = ['f1', 'f2', 'f3', 'f4'];
-
-const FILTER_OPTIONS = ['All', 'Confirmed', 'Cancelled'] as const;
+const FILTER_OPTIONS = ['All', 'Confirmed', 'Waiting list', 'Cancelled'] as const;
 type Filter = typeof FILTER_OPTIONS[number];
+
+function statusClass(s: ClassBooking['status']) {
+  if (s === 'confirmed') return 'confirmed';
+  if (s === 'cancelled') return 'failed';
+  if (s === 'waiting_list') return 'pending';
+  return 'view';
+}
 
 export function AdminBookingsPage() {
   const qc = useQueryClient();
   const [filter, setFilter] = useState<Filter>('All');
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [restoreCredit, setRestoreCredit] = useState(true);
+  const [cancelError, setCancelError] = useState('');
 
-  const { data: allBookings = [], isLoading } = useQuery({
-    queryKey: ['allBookings'],
-    queryFn: async () => (await Promise.all(ALL_FAMILY_IDS.map(id => dataClient.getBookings(id)))).flat(),
-  });
-
-  const { data: classInstances = [] } = useQuery({
-    queryKey: ['classInstances'],
-    queryFn: () => dataClient.getClassInstances(),
-  });
-
-  const { data: allChildren = [] } = useQuery({
-    queryKey: ['allChildren'],
-    queryFn: async () => (await Promise.all(ALL_FAMILY_IDS.map(id => dataClient.getChildren(id)))).flat(),
-  });
-
-  const { data: teachers = [] } = useQuery({
-    queryKey: ['teachers'],
-    queryFn: () => dataClient.getTeachers(),
+  const { data: bookings = [], isLoading } = useQuery({
+    queryKey: qk.allBookings,
+    queryFn: () => dataClient.getAllBookings(),
   });
 
   const { mutate: cancelBooking, isPending: cancelling } = useMutation({
-    mutationFn: (id: string) => dataClient.cancelBooking(id),
+    mutationFn: (id: string) => dataClient.cancelBooking(id, { restoreCredit }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['allBookings'] });
+      qc.invalidateQueries({ queryKey: qk.allBookings });
+      qc.invalidateQueries({ queryKey: ['bookings'] });
+      qc.invalidateQueries({ queryKey: ['terms'] });
+      qc.invalidateQueries({ queryKey: qk.sessions() });
       setCancellingId(null);
+      setCancelError('');
     },
+    onError: (e: Error) => setCancelError(toAppError(e).message),
   });
 
-  const enriched = allBookings.map(b => {
-    const cls = classInstances.find(c => c.id === b.class_instance_id);
-    const child = allChildren.find(c => c.id === b.child_id);
-    const teacher = cls ? teachers.find(t => t.id === cls.teacher_id) : null;
-    return { booking: b, cls, child, teacher };
-  });
-
-  const filtered = enriched.filter(({ booking }) => {
+  const filtered = bookings.filter(b => {
     if (filter === 'All') return true;
-    if (filter === 'Confirmed') return booking.status === 'confirmed';
-    if (filter === 'Cancelled') return booking.status === 'cancelled';
+    if (filter === 'Confirmed') return b.status === 'confirmed';
+    if (filter === 'Waiting list') return b.status === 'waiting_list';
+    if (filter === 'Cancelled') return b.status === 'cancelled';
     return true;
   });
 
-  const counts = {
-    All: enriched.length,
-    Confirmed: enriched.filter(e => e.booking.status === 'confirmed').length,
-    Cancelled: enriched.filter(e => e.booking.status === 'cancelled').length,
+  const counts: Record<Filter, number> = {
+    All: bookings.length,
+    Confirmed: bookings.filter(b => b.status === 'confirmed').length,
+    'Waiting list': bookings.filter(b => b.status === 'waiting_list').length,
+    Cancelled: bookings.filter(b => b.status === 'cancelled').length,
   };
 
   return (
@@ -80,39 +76,45 @@ export function AdminBookingsPage() {
         <div className="table-wrap">
           <table>
             <thead>
-              <tr>{['Student', 'Subject', 'Tutor', 'Day', 'Time', 'Source', 'Status', ''].map(h => <th key={h}>{h}</th>)}</tr>
+              <tr>{['Student', 'Subject', 'Tutor', 'Date', 'Source', 'Status', ''].map(h => <th key={h}>{h}</th>)}</tr>
             </thead>
             <tbody>
               {isLoading && (
-                <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--muted)', padding: 24 }}>Loading…</td></tr>
+                <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--muted)', padding: 24 }}>Loading…</td></tr>
               )}
               {!isLoading && filtered.length === 0 && (
-                <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--muted)', padding: 24 }}>No bookings found.</td></tr>
+                <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--muted)', padding: 24 }}>No bookings found.</td></tr>
               )}
-              {filtered.map(({ booking, cls, child, teacher }) => (
-                <tr key={booking.id}>
-                  <td><strong className="table-name">{child?.name ?? '—'}</strong></td>
-                  <td>{cls?.subject ?? '—'}</td>
-                  <td>{teacher?.name ?? '—'}</td>
-                  <td>{cls?.day_of_week ?? '—'}</td>
-                  <td>{cls?.time ?? '—'}</td>
-                  <td>
-                    <span className={`table-status ${booking.source === 'term_credit' ? 'confirmed' : 'view'}`}>
-                      {booking.source === 'term_credit' ? 'Term credit' : 'Individual'}
-                    </span>
-                  </td>
-                  <td>
-                    <span className={`table-status ${booking.status === 'confirmed' ? 'confirmed' : booking.status === 'cancelled' ? 'failed' : 'pending'}`}>
-                      {booking.status.charAt(0).toUpperCase() + booking.status.slice(1).replace('_', ' ')}
-                    </span>
-                  </td>
-                  <td>
-                    {booking.status === 'confirmed' && (
-                      <button className="btn-view-profile" onClick={() => setCancellingId(booking.id)}>Cancel</button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {filtered.map(b => {
+                const session = b.session;
+                const child = b.child;
+                const date = session?.starts_at
+                  ? new Date(session.starts_at).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })
+                  : '—';
+                return (
+                  <tr key={b.id}>
+                    <td><strong className="table-name">{child?.name ?? '—'}</strong></td>
+                    <td>{session?.subject ?? '—'}</td>
+                    <td>{session?.teacher_name ?? '—'}</td>
+                    <td>{date}</td>
+                    <td>
+                      <span className={`table-status ${b.source === 'term_credit' ? 'confirmed' : 'view'}`}>
+                        {b.source === 'term_credit' ? 'Term credit' : 'Individual'}
+                      </span>
+                    </td>
+                    <td>
+                      <span className={`table-status ${statusClass(b.status)}`}>
+                        {b.status.replace('_', ' ').replace(/^\w/, c => c.toUpperCase())}
+                      </span>
+                    </td>
+                    <td>
+                      {b.status === 'confirmed' && (
+                        <button className="btn-view-profile" onClick={() => { setCancellingId(b.id); setRestoreCredit(true); setCancelError(''); }}>Cancel</button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -123,7 +125,11 @@ export function AdminBookingsPage() {
           <div className="modal" onClick={e => e.stopPropagation()}>
             <button className="modal-close" onClick={() => setCancellingId(null)}><X size={18} /></button>
             <h2>Cancel booking?</h2>
-            <p>This will cancel the booking and restore the family's class credit if applicable.</p>
+            <p>Choose whether to return the family's class credit.</p>
+            <div style={{ margin: '16px 0' }}>
+              <Toggle on={restoreCredit} onToggle={() => setRestoreCredit(v => !v)} label="Return credit to family" sublabel={restoreCredit ? 'Credit will be restored' : 'Credit will not be restored'} />
+            </div>
+            {cancelError && <div className="auth-error">{cancelError}</div>}
             <Button onClick={() => cancelBooking(cancellingId)} disabled={cancelling}>
               {cancelling ? 'Cancelling…' : 'Yes, cancel'}
             </Button>

@@ -1,49 +1,65 @@
-import { ArrowRight, BookOpen, Check, Download, Plus, X, Zap } from 'lucide-react';
+import { ArrowRight, Check, Download, Plus, X } from 'lucide-react';
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '../../../components/ui/Button';
-import { Progress } from '../../../components/ui/Progress';
 import { dataClient } from '../../../lib/data/client';
 import { useAuth } from '../../../app/providers';
-
-// Static enrichment data per child id — mirrors prototype display
-const enrichmentByChildId: Record<string, {
-  maths: number; english: number; spelling: number; attendance: number; trend: string;
-  tutorName: string; tutorInitials: string; tutorColor: string;
-  goals: string[]; goalsDone: number;
-  programs: { name: string; tutor: string; pct: number; color: string }[];
-  attendanceBars: number[];
-}> = {
-  c1: { maths: 80, english: 72, spelling: 78, attendance: 94, trend: '+12%', tutorName: 'Jessica Taylor', tutorInitials: 'JT', tutorColor: 'pink', goals: ['Explain fractions with confidence', 'Read unfamiliar texts fluently', 'Use richer vocabulary in writing'], goalsDone: 2, programs: [{ name: 'Mathematics foundations', tutor: 'Jessica Taylor', pct: 80, color: 'pink' }, { name: 'English confidence', tutor: 'Sarah Wilson', pct: 72, color: 'teal' }], attendanceBars: [75, 90, 80, 100, 94, 100] },
-  c2: { maths: 64, english: 78, spelling: 70, attendance: 88, trend: '+8%', tutorName: 'Sarah Wilson', tutorInitials: 'SW', tutorColor: 'teal', goals: ['Build confidence with addition', 'Read aloud with expression'], goalsDone: 1, programs: [{ name: 'English confidence', tutor: 'Sarah Wilson', pct: 78, color: 'teal' }], attendanceBars: [60, 75, 85, 70, 90, 88] },
-};
+import { qk } from '../../../lib/data/queryKeys';
+import { toAppError } from '../../../lib/data/errors';
 
 type Tab = 'overview' | 'goals' | 'attendance' | 'sessions' | 'notes';
+
+const STATUS_COLORS: Record<string, string> = {
+  present: 'green', late: 'yellow', absent: 'orange', no_show: 'orange',
+};
 
 export function ChildProfilePage() {
   const { childId } = useParams<{ childId: string }>();
   const { familyId } = useAuth();
+  const qc = useQueryClient();
 
   const { data: children = [] } = useQuery({
-    queryKey: ['children', familyId],
+    queryKey: qk.children(familyId),
     queryFn: () => dataClient.getChildren(familyId),
+    enabled: !!familyId,
   });
 
   const child = children.find(c => c.id === childId) ?? children[0];
-  const e = (childId && enrichmentByChildId[childId]) ? enrichmentByChildId[childId] : enrichmentByChildId['c1'];
+
+  const { data: attendance = [] } = useQuery({
+    queryKey: qk.childAttendance(child?.id ?? ''),
+    queryFn: () => dataClient.getChildAttendance(child!.id),
+    enabled: !!child?.id,
+  });
+
+  const { data: reports = [] } = useQuery({
+    queryKey: qk.reports(child?.id ?? ''),
+    queryFn: () => dataClient.getReportsForChild(child!.id),
+    enabled: !!child?.id,
+  });
+
+  const { data: bookings = [] } = useQuery({
+    queryKey: qk.bookings(familyId),
+    queryFn: () => dataClient.getBookings(familyId),
+    enabled: !!familyId,
+  });
 
   const [tab, setTab] = useState<Tab>('overview');
-  const [goals, setGoals] = useState(e.goals.map((g, i) => ({ text: g, done: i < e.goalsDone })));
+  const [goalText, setGoalText] = useState(child?.goals ?? '');
   const [showAddGoal, setShowAddGoal] = useState(false);
-  const [goalForm, setGoalForm] = useState({ text: '', subject: 'Mathematics' });
+  const [goalForm, setGoalForm] = useState('');
+  const [saveError, setSaveError] = useState('');
 
-  const handleAddGoal = () => {
-    if (!goalForm.text.trim()) return;
-    setGoals(prev => [{ text: goalForm.text.trim(), done: false }, ...prev]);
-    setGoalForm({ text: '', subject: 'Mathematics' });
-    setShowAddGoal(false);
-  };
+  const saveGoals = useMutation({
+    mutationFn: (goals: string) => dataClient.updateChild(child!.id, { goals }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.children(familyId) });
+      setShowAddGoal(false);
+      setSaveError('');
+    },
+    onError: (e) => setSaveError(toAppError(e).message),
+  });
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'overview', label: 'Overview' }, { key: 'goals', label: 'Goals' },
@@ -51,6 +67,20 @@ export function ChildProfilePage() {
   ];
 
   if (!child) return <div className="page-stack"><p>Loading...</p></div>;
+
+  const latestReport = reports.length > 0 ? reports[reports.length - 1] : null;
+  const presentCount = attendance.filter(a => a.status === 'present' || a.status === 'late').length;
+  const attendancePct = attendance.length > 0 ? Math.round((presentCount / attendance.length) * 100) : null;
+
+  const childBookings = bookings.filter(b => b.child_id === child.id && b.status === 'confirmed' && b.session);
+
+  const handleAddGoal = () => {
+    if (!goalForm.trim()) return;
+    const updated = goalText ? `${goalText}\n${goalForm.trim()}` : goalForm.trim();
+    setGoalText(updated);
+    saveGoals.mutate(updated);
+    setGoalForm('');
+  };
 
   return (
     <div className="page-stack">
@@ -66,82 +96,134 @@ export function ChildProfilePage() {
           <Button icon={ArrowRight}>View full report</Button>
         </div>
       </div>
+
       <div className="profile-tabs">
         {tabs.map(t => <button key={t.key} className={tab === t.key ? 'active' : ''} onClick={() => setTab(t.key)}>{t.label}</button>)}
       </div>
+
       {tab === 'overview' && (
         <>
           <div className="grid-2">
             <div className="card">
               <div className="card-heading">
-                <div><span className="label">Progress snapshot</span><h3>Big wins, week by week</h3></div>
-                <span className="trend"><Zap size={14} /> {e.trend}</span>
+                <div><span className="label">Progress snapshot</span><h3>Latest report</h3></div>
               </div>
-              {[['Mathematics', e.maths, 'pink', 'Fractions'], ['Reading', e.english, 'teal', 'Comprehension'], ['Spelling', e.spelling, 'yellow', 'Word patterns']].map(([label, val, color, sub]) => (
-                <div className="subject-progress" key={label as string}>
-                  <div><span className={`subject-dot ${color}-dot`} />{label} <b>{val}%</b></div>
-                  <small>{sub}</small>
-                  <Progress value={val as number} color={color as string} />
-                </div>
-              ))}
-            </div>
-            <div className="card goals-card">
-              <span className="label">Learning goals</span>
-              <h3>What we're working towards</h3>
-              {goals.map((g, i) => (
-                <div className="goal" key={i}>
-                  <span className={`goal-check ${g.done ? 'done' : ''}`}>{g.done && <Check size={13} />}</span>
-                  <span>{g.text}</span>
-                </div>
-              ))}
-              <Button variant="soft" icon={Plus} onClick={() => setShowAddGoal(true)}>Add a goal</Button>
-            </div>
-          </div>
-          <div className="section-row">
-            <div className="card">
-              <div className="card-heading"><div><span className="label">Current programs</span><h3>Learning in motion</h3></div></div>
-              {e.programs.map((p, i) => (
-                <div className="program-row" key={i}>
-                  <div className={`program-icon ${p.color}-bg`}><BookOpen size={19} /></div>
-                  <div><strong>{p.name}</strong><span>{p.tutor} · Weekly</span></div>
-                  <b>{p.pct}%</b>
-                </div>
-              ))}
+              {latestReport ? (
+                <>
+                  <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 8 }}>{latestReport.term}</p>
+                  {latestReport.subjects.map(s => (
+                    <div className="subject-progress" key={s.subject}>
+                      <div><span className="subject-dot pink-dot" />{s.subject} <b>{s.rating * 20}%</b></div>
+                      <div style={{ height: 6, background: 'var(--line)', borderRadius: 3, marginTop: 4 }}>
+                        <div style={{ height: '100%', width: `${s.rating * 20}%`, background: 'var(--pink)', borderRadius: 3 }} />
+                      </div>
+                    </div>
+                  ))}
+                  {latestReport.subjects.length === 0 && (
+                    <p style={{ fontSize: 13, color: 'var(--muted)' }}>Overall: {latestReport.overall}/5</p>
+                  )}
+                </>
+              ) : (
+                <p className="empty-state-text">No reports yet.</p>
+              )}
             </div>
             <div className="card attendance-card">
               <span className="label">Attendance</span>
-              <div className="attendance-number"><strong>{e.attendance}%</strong><span>this term</span></div>
-              <div className="attendance-bars">{e.attendanceBars.map((h, i) => <i key={i} style={{ height: `${h}%` }} />)}</div>
+              {attendancePct !== null ? (
+                <>
+                  <div className="attendance-number"><strong>{attendancePct}%</strong><span>this term</span></div>
+                  <div className="attendance-bars">
+                    {attendance.slice(-6).map((a, i) => (
+                      <i key={i} style={{ height: `${a.status === 'present' ? 100 : a.status === 'late' ? 70 : 30}%`, background: `var(--${STATUS_COLORS[a.status] ?? 'muted'})` }} />
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p className="empty-state-text">No attendance recorded yet.</p>
+              )}
             </div>
           </div>
+          {latestReport?.note && (
+            <div className="card notice-card">
+              <div className="notice-icon"><span>✦</span></div>
+              <span className="label">Latest tutor note</span>
+              <p>"{latestReport.note}"</p>
+            </div>
+          )}
         </>
       )}
-      {tab === 'attendance' && (
-        <div className="card attendance-card">
-          <span className="label">Attendance</span>
-          <div className="attendance-number"><strong>{e.attendance}%</strong><span>this term</span></div>
-          <div className="attendance-bars">{e.attendanceBars.map((h, i) => <i key={i} style={{ height: `${h}%` }} />)}</div>
-        </div>
-      )}
+
       {tab === 'goals' && (
         <div className="card goals-card">
           <span className="label">Learning goals</span>
           <h3>What we're working towards</h3>
-          {goals.map((g, i) => (
-            <div className="goal" key={i}>
-              <span className={`goal-check ${g.done ? 'done' : ''}`}>{g.done && <Check size={13} />}</span>
-              <span>{g.text}</span>
-            </div>
-          ))}
+          {goalText ? (
+            goalText.split('\n').filter(Boolean).map((g, i) => (
+              <div className="goal" key={i}>
+                <span className="goal-check" />
+                <span>{g}</span>
+              </div>
+            ))
+          ) : (
+            <p className="empty-state-text">No goals set yet.</p>
+          )}
+          {saveError && <p className="auth-error">{saveError}</p>}
           <Button variant="soft" icon={Plus} onClick={() => setShowAddGoal(true)}>Add a goal</Button>
         </div>
       )}
+
+      {tab === 'attendance' && (
+        <div className="card">
+          <div className="card-heading"><div><span className="label">Attendance history</span><h3>Session by session</h3></div></div>
+          {attendance.length === 0 ? (
+            <p className="empty-state-text">No attendance recorded yet.</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {attendance.map((a, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '6px 0', borderBottom: '1px solid var(--line)' }}>
+                  <span style={{ color: 'var(--muted)' }}>Session {i + 1}</span>
+                  <span className={`table-status ${a.status === 'present' ? 'confirmed' : 'cancelled'}`}>
+                    {a.status.replace('_', ' ')}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {tab === 'sessions' && (
-        <div className="card"><p className="empty-state-text">Session history will appear here.</p></div>
+        <div className="card">
+          <div className="card-heading"><div><span className="label">Upcoming sessions</span><h3>Booked classes</h3></div></div>
+          {childBookings.length === 0 ? (
+            <p className="empty-state-text">No upcoming sessions booked.</p>
+          ) : (
+            childBookings
+              .filter(b => b.session && new Date(b.session.starts_at) > new Date())
+              .sort((a, b) => new Date(a.session!.starts_at).getTime() - new Date(b.session!.starts_at).getTime())
+              .map(b => (
+                <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
+                  <span><strong>{b.session!.subject}</strong></span>
+                  <span style={{ color: 'var(--muted)' }}>{new Date(b.session!.starts_at).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
+                </div>
+              ))
+          )}
+        </div>
       )}
+
       {tab === 'notes' && (
-        <div className="card"><p className="empty-state-text">No notes have been recorded yet. Tutor notes will appear here after each session.</p></div>
+        <div className="card">
+          {child.notes ? (
+            <>
+              <span className="label">About this student</span>
+              <p style={{ fontSize: 14, marginTop: 8 }}>{child.notes}</p>
+            </>
+          ) : (
+            <p className="empty-state-text">No notes have been recorded yet. Tutor notes will appear here after each session.</p>
+          )}
+        </div>
       )}
+
       {showAddGoal && (
         <div className="modal-backdrop" onClick={() => setShowAddGoal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
@@ -150,14 +232,11 @@ export function ChildProfilePage() {
             <h2>Add a goal</h2>
             <p>Set a new learning goal for {child.name.split(' ')[0]}.</p>
             <div className="add-modal-form">
-              <label>Goal text<input value={goalForm.text} onChange={e => setGoalForm({ ...goalForm, text: e.target.value })} placeholder="e.g. Build confidence with fractions" /></label>
-              <label>Subject area
-                <select value={goalForm.subject} onChange={e => setGoalForm({ ...goalForm, subject: e.target.value })}>
-                  {['Mathematics', 'English', 'Reading & Spelling'].map(s => <option key={s}>{s}</option>)}
-                </select>
-              </label>
+              <label>Goal<input value={goalForm} onChange={e => setGoalForm(e.target.value)} placeholder="e.g. Build confidence with fractions" /></label>
             </div>
-            <Button onClick={handleAddGoal} icon={Check}>Save goal</Button>
+            <Button onClick={handleAddGoal} icon={Check} disabled={saveGoals.isPending}>
+              {saveGoals.isPending ? 'Saving…' : 'Save goal'}
+            </Button>
             <button className="modal-cancel" onClick={() => setShowAddGoal(false)}>Cancel</button>
           </div>
         </div>

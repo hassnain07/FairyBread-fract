@@ -3,11 +3,13 @@ import { mockFamilies, mockChildren, mockTerms, mockPayments } from './families'
 import { mockConversations, mockMessages, mockNotifications } from './messages';
 import type { Child, NewChild, ChildPatch, EnrolmentInput } from '../../../types/family';
 import type { Term, GatingSnapshot } from '../../../types/term';
-import type { ClassBooking, Assessment, IndividualClassPurchase, StudentReport, NewReport, BookingCancelResult } from '../../../types/booking';
+import type { ClassBooking, Assessment, IndividualClassPurchase, StudentReport, NewReport, BookingCancelResult, AttendanceRecord } from '../../../types/booking';
 import type { Payment, PaymentIntent } from '../../../types/payment';
 import type { Teacher, ClassInstance, ClassSlot, ClassSession, Program } from '../../../types/teacher';
 import type { ChatMessage } from '../../../types/message';
 import type { ShopProduct, ShopOrder, ShopCartItem } from '../../../types/shop';
+import type { AdminStats } from '../../../types/admin';
+import type { Closure } from '../../../types/admin';
 import { INDIVIDUAL_CLASS_PRICE } from '../../config';
 
 let _children = [...mockChildren];
@@ -66,6 +68,7 @@ export const mockDataClient: DataClient = {
 
   // ── Settings ───────────────────────────────────────────────────────────────
   async getSettings() { return {}; },
+  async updateSetting(_key: string, _value: unknown) {},
   async getDocuments() { return { ..._documents }; },
   async uploadDocument(key, file) {
     if (_documents[key]) URL.revokeObjectURL(_documents[key]);
@@ -162,7 +165,19 @@ export const mockDataClient: DataClient = {
   // ── Catalog & sessions ─────────────────────────────────────────────────────
   async getTeachers() { return mockTeachers; },
   async getPrograms(): Promise<Program[]> { return []; },
+  async upsertProgram(p: { id?: string; name: string; description?: string; color?: string; is_active?: boolean }): Promise<Program> {
+    return { id: p.id ?? `prog${Date.now()}`, name: p.name, description: p.description, color: p.color ?? 'pink', is_active: p.is_active ?? true };
+  },
+  async getClosures(): Promise<Closure[]> { return []; },
+  async upsertClosure(c: { id?: string; date: string; label: string }): Promise<Closure> {
+    return { id: c.id ?? `cl${Date.now()}`, date: c.date, label: c.label };
+  },
+  async deleteClosure(_id: string) {},
   async getClassSlots(): Promise<ClassSlot[]> { return []; },
+  async createClassSlot(_input) { throw new Error('createClassSlot not implemented in mock'); },
+  async updateClassSlot(_id, _patch) { throw new Error('updateClassSlot not implemented in mock'); },
+  async deactivateClassSlot(_id, _cancelFuture) { return 0; },
+  async cancelSession(_sessionId, _reason) { return 0; },
   async getUpcomingSessions(): Promise<ClassSession[]> { return []; },
   async getClassInstances() { return _classInstances; },
   async createClassInstance(cls) {
@@ -182,6 +197,7 @@ export const mockDataClient: DataClient = {
   async getBookings(familyId) { return _bookings.filter(b => b.family_id === familyId); },
   async getAllBookings() { return _bookings; },
   async getBookingsForTeacher() { return _bookings; },
+  async getWaitingList() { return _bookings.filter(b => b.status === 'waiting_list'); },
   async bookClassSession(childId, sessionId): Promise<ClassBooking> {
     const child = _children.find(c => c.id === childId);
     if (!child) throw new Error('child_not_found');
@@ -273,19 +289,37 @@ export const mockDataClient: DataClient = {
   // ── Assessments ────────────────────────────────────────────────────────────
   async getAssessments(familyId) { return _assessments.filter(a => a.family_id === familyId); },
 
-  // ── Reports ────────────────────────────────────────────────────────────────
-  async getReports(teacherId) { return _reports.filter(r => r.teacher_id === teacherId); },
+  // ── Reports & attendance ──────────────────────────────────────────────────
+  async getReportsForChild(childId) { return _reports.filter(r => r.child_id === childId); },
+  async getTeacherReports() { return _reports; },
   async createReport(report: NewReport) {
     const r: StudentReport = { ...report, id: `rpt${Date.now()}`, created_at: new Date().toISOString() };
     _reports = [..._reports, r];
     return r;
   },
-  async getTeacherAssessments(teacherId) { return _assessments.filter(a => a.teacher_id === teacherId); },
-  async createTeacherAssessment(assessment) {
-    const a: Assessment = { ...assessment, id: `a${Date.now()}` };
-    _assessments = [..._assessments, a];
-    return a;
+  async getTeacherAssessments() { return _assessments; },
+  async createTeacherAssessments(rows) {
+    const created: Assessment[] = rows.map(row => ({
+      id: `a${Date.now()}-${row.childId}`,
+      family_id: _children.find(c => c.id === row.childId)?.family_id ?? '',
+      child_id: row.childId,
+      class_id: row.classId,
+      scheduled_date: row.date,
+      scheduled_time: row.time,
+      status: 'scheduled' as const,
+    }));
+    _assessments = [..._assessments, ...created];
+    return created;
   },
+  async updateAssessment(id, patch) {
+    let updated: Assessment | undefined;
+    _assessments = _assessments.map(a => { if (a.id !== id) return a; updated = { ...a, ...patch }; return updated!; });
+    if (!updated) throw new Error(`Assessment ${id} not found`);
+    return updated;
+  },
+  async getAttendance(_sessionId) { return []; },
+  async getChildAttendance(_childId) { return []; },
+  async saveAttendance(_sessionId, _records) { return 0; },
 
   // ── Messages ───────────────────────────────────────────────────────────────
   async getConversations(participantId) { return _conversations.filter(c => c.participant_ids.includes(participantId)); },
@@ -337,6 +371,12 @@ export const mockDataClient: DataClient = {
   async verifyShopOrder(orderId, action) {
     _shopOrders = _shopOrders.map(o => o.id === orderId ? { ...o, payment_status: action === 'approve' ? 'paid' : 'unpaid', status: action === 'approve' ? 'Processing' : 'Pending' } : o);
   },
+
+  // ── Admin ──────────────────────────────────────────────────────────────────
+  async getAdminStats(): Promise<AdminStats> {
+    return { active_students: 0, upcoming_assessments: 0, classes_today: 0, pending_payments: 0, reports_due: 0 };
+  },
+  async inviteStaff(_input: { email: string; fullName: string; role: 'teacher' | 'admin'; subjects?: string[]; color?: string }) {},
 
   // ── Legacy ─────────────────────────────────────────────────────────────────
   async getIndividualPurchases(familyId) { return _individualPurchases.filter(p => p.family_id === familyId); },

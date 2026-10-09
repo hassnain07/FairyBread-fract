@@ -36,7 +36,7 @@ export function DashboardPage() {
 
   const { data: reports = [] } = useQuery({
     queryKey: qk.reports(child?.id ?? ''),
-    queryFn: () => dataClient.getReports(child?.id ?? ''),
+    queryFn: () => dataClient.getReportsForChild(child!.id),
     enabled: !!child?.id,
   });
 

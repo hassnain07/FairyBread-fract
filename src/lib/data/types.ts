@@ -6,6 +6,7 @@ import type { Teacher, ClassSlot, ClassSession, ClassSlotInput, Program, ClassIn
 import type { Conversation, ChatMessage, AppNotification } from '../../types/message';
 import type { ShopProduct, ShopOrder, ShopCartItem } from '../../types/shop';
 import type { AuthUser } from '../../types/auth';
+import type { AdminStats, Closure } from '../../types/admin';
 
 export interface DataClient {
   // ── Auth ──────────────────────────────────────────────────────────────────
@@ -20,6 +21,7 @@ export interface DataClient {
 
   // ── Settings / content ────────────────────────────────────────────────────
   getSettings(): Promise<Record<string, unknown>>;
+  updateSetting(key: string, value: unknown): Promise<void>;
   getDocuments(): Promise<Record<string, string>>; // key → public URL
   uploadDocument(key: string, file: File): Promise<string>;
 
@@ -40,13 +42,22 @@ export interface DataClient {
   // ── Catalog & sessions ────────────────────────────────────────────────────
   getTeachers(): Promise<Teacher[]>;
   getPrograms(): Promise<Program[]>;
+  upsertProgram(p: { id?: string; name: string; description?: string; color?: string; is_active?: boolean }): Promise<Program>;
   getClassSlots(): Promise<ClassSlot[]>;
+  createClassSlot(input: ClassSlotInput): Promise<ClassSlot>;
+  updateClassSlot(id: string, patch: Partial<ClassSlotInput>): Promise<ClassSlot>;
+  deactivateClassSlot(id: string, cancelFuture?: boolean): Promise<number>;
   getUpcomingSessions(opts?: { from?: string; to?: string; classId?: string; teacherId?: string }): Promise<ClassSession[]>;
+  cancelSession(sessionId: string, reason?: string): Promise<number>;
+  getClosures(): Promise<Closure[]>;
+  upsertClosure(c: { id?: string; date: string; label: string }): Promise<Closure>;
+  deleteClosure(id: string): Promise<void>;
 
   // ── Bookings ──────────────────────────────────────────────────────────────
   getBookings(familyId: string): Promise<ClassBooking[]>;
   getAllBookings(): Promise<ClassBooking[]>;
   getBookingsForTeacher(): Promise<ClassBooking[]>;
+  getWaitingList(): Promise<ClassBooking[]>;
   bookClassSession(childId: string, sessionId: string): Promise<ClassBooking>;
   joinWaitlist(childId: string, sessionId: string): Promise<ClassBooking>;
   cancelBooking(bookingId: string, opts?: { restoreCredit?: boolean }): Promise<BookingCancelResult>;
@@ -63,12 +74,17 @@ export interface DataClient {
 
   // ── Assessments ───────────────────────────────────────────────────────────
   getAssessments(familyId: string): Promise<Assessment[]>;
+  getTeacherAssessments(): Promise<Assessment[]>;
+  createTeacherAssessments(rows: Array<{ childId: string; classId?: string; date: string; time: string }>): Promise<Assessment[]>;
+  updateAssessment(id: string, patch: Partial<Pick<Assessment, 'status' | 'scheduled_date' | 'scheduled_time' | 'notes'>>): Promise<Assessment>;
 
-  // ── Reports ───────────────────────────────────────────────────────────────
-  getReports(teacherId: string): Promise<StudentReport[]>;
+  // ── Reports & attendance ──────────────────────────────────────────────────
+  getReportsForChild(childId: string): Promise<StudentReport[]>;
+  getTeacherReports(): Promise<StudentReport[]>;
   createReport(report: NewReport): Promise<StudentReport>;
-  getTeacherAssessments(teacherId: string): Promise<Assessment[]>;
-  createTeacherAssessment(assessment: Omit<Assessment, 'id'>): Promise<Assessment>;
+  getAttendance(sessionId: string): Promise<AttendanceRecord[]>;
+  getChildAttendance(childId: string): Promise<AttendanceRecord[]>;
+  saveAttendance(sessionId: string, records: Array<{ childId: string; status: AttendanceRecord['status'] }>): Promise<number>;
 
   // ── Messages ──────────────────────────────────────────────────────────────
   getConversations(participantId: string): Promise<Conversation[]>;
@@ -96,7 +112,9 @@ export interface DataClient {
   ): Promise<ShopOrder>;
   verifyShopOrder(orderId: string, action: 'approve' | 'reject'): Promise<void>;
 
-  // ── Admin family/term helpers ─────────────────────────────────────────────
+  // ── Admin ─────────────────────────────────────────────────────────────────
+  getAdminStats(): Promise<AdminStats>;
+  inviteStaff(input: { email: string; fullName: string; role: 'teacher' | 'admin'; subjects?: string[]; color?: string }): Promise<void>;
   createFamily(input: { parentName: string; email?: string; phone?: string }): Promise<Family>;
   adminMarkEnrolled(childId: string, note?: string): Promise<Child>;
   adminAdjustCredits(termId: string, delta: number, note: string): Promise<Term>;

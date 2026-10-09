@@ -9,6 +9,14 @@ export function createSettingsMethods(sb: AppSupabase) {
       return Object.fromEntries((data ?? []).map((r: any) => [r.key, r.value]));
     },
 
+    async updateSetting(key: string, value: unknown): Promise<void> {
+      const { error } = await sb
+        .from('app_settings')
+        .update({ value, updated_at: new Date().toISOString() })
+        .eq('key', key);
+      if (error) throw toAppError(error);
+    },
+
     async getDocuments(): Promise<Record<string, string>> {
       const { data, error } = await sb.from('documents').select('key,storage_path,version');
       if (error) throw toAppError(error);

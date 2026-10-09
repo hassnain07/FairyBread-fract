@@ -1,6 +1,6 @@
 import type { AppSupabase } from '../../supabase';
 import { toAppError } from '../errors';
-import type { Teacher, Program, ClassSlot, ClassSession } from '../../../types/teacher';
+import type { Teacher, Program, ClassSlot, ClassSession, ClassSlotInput } from '../../../types/teacher';
 
 function toTeacher(r: any): Teacher {
   return {
@@ -102,6 +102,64 @@ export function createCatalogMethods(sb: AppSupabase) {
       const { data, error } = await q;
       if (error) throw toAppError(error);
       return (data ?? []).map(toClassSession);
+    },
+
+    async createClassSlot(input: ClassSlotInput): Promise<ClassSlot> {
+      const { data: cls, error: clsErr } = await sb
+        .from('classes')
+        .insert({
+          program_id: input.program_id,
+          teacher_id: input.teacher_id,
+          day_of_week: input.day_of_week,
+          start_time: input.start_time,
+          duration_minutes: input.duration_minutes ?? 60,
+          capacity: input.capacity,
+        })
+        .select('id')
+        .single();
+      if (clsErr) throw toAppError(clsErr);
+      if (input.price_cents !== undefined) {
+        const { error: rateErr } = await sb
+          .from('class_rates')
+          .upsert({ class_id: cls.id, price_cents: input.price_cents });
+        if (rateErr) throw toAppError(rateErr);
+      }
+      const { data, error } = await sb.from('v_class_catalog').select('*').eq('id', cls.id).single();
+      if (error) throw toAppError(error);
+      return toClassSlot(data);
+    },
+
+    async updateClassSlot(id: string, patch: Partial<ClassSlotInput>): Promise<ClassSlot> {
+      const update: Record<string, unknown> = {};
+      if (patch.program_id !== undefined) update.program_id = patch.program_id;
+      if (patch.teacher_id !== undefined) update.teacher_id = patch.teacher_id;
+      if (patch.day_of_week !== undefined) update.day_of_week = patch.day_of_week;
+      if (patch.start_time !== undefined) update.start_time = patch.start_time;
+      if (patch.duration_minutes !== undefined) update.duration_minutes = patch.duration_minutes;
+      if (patch.capacity !== undefined) update.capacity = patch.capacity;
+      if (Object.keys(update).length > 0) {
+        const { error } = await sb.from('classes').update(update).eq('id', id);
+        if (error) throw toAppError(error);
+      }
+      if (patch.price_cents !== undefined) {
+        const { error } = await sb.from('class_rates').upsert({ class_id: id, price_cents: patch.price_cents });
+        if (error) throw toAppError(error);
+      }
+      const { data, error } = await sb.from('v_class_catalog').select('*').eq('id', id).single();
+      if (error) throw toAppError(error);
+      return toClassSlot(data);
+    },
+
+    async deactivateClassSlot(id: string, cancelFuture?: boolean): Promise<number> {
+      const { data, error } = await sb.rpc('deactivate_class', { p_class_id: id, p_cancel_future: cancelFuture ?? false });
+      if (error) throw toAppError(error);
+      return data as number;
+    },
+
+    async cancelSession(sessionId: string, reason?: string): Promise<number> {
+      const { data, error } = await sb.rpc('cancel_session', { p_session_id: sessionId, p_reason: reason ?? null });
+      if (error) throw toAppError(error);
+      return data as number;
     },
   };
 }

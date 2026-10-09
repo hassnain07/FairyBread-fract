@@ -2,49 +2,53 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { X, BookOpen, Calendar, Target, MessageSquare, User } from 'lucide-react';
 import { dataClient } from '../../../lib/data/client';
+import { useAuth } from '../../../app/providers';
+import { qk } from '../../../lib/data/queryKeys';
 import type { Child } from '../../../types/family';
 
-const ALL_FAMILY_IDS = ['f1', 'f2', 'f3', 'f4'];
-
 export function TeacherStudentsPage() {
-  return <TeacherStudentsView teacherId="tch1" />;
+  return <TeacherStudentsView />;
 }
 
-export function TeacherStudentsView({ teacherId }: { teacherId: string }) {
+export function TeacherStudentsView({ teacherIdOverride }: { teacherIdOverride?: string }) {
+  const { teacherId: authTeacherId } = useAuth();
+  const teacherId = teacherIdOverride ?? authTeacherId;
   const [selected, setSelected] = useState<Child | null>(null);
 
-  const { data: allClasses = [] } = useQuery({
-    queryKey: ['classInstances'],
-    queryFn: () => dataClient.getClassInstances(),
-  });
-  const { data: allBookings = [] } = useQuery({
-    queryKey: ['allBookings'],
-    queryFn: async () => (await Promise.all(ALL_FAMILY_IDS.map(id => dataClient.getBookings(id)))).flat(),
-  });
-  const { data: allChildren = [] } = useQuery({
-    queryKey: ['allChildren'],
-    queryFn: async () => (await Promise.all(ALL_FAMILY_IDS.map(id => dataClient.getChildren(id)))).flat(),
+  const { data: bookings = [], isLoading } = useQuery({
+    queryKey: qk.teacherBookings,
+    queryFn: () => dataClient.getBookingsForTeacher(),
+    enabled: !!teacherId,
   });
 
-  const myClassIds = new Set(allClasses.filter(c => c.teacher_id === teacherId).map(c => c.id));
-  const myBookings = allBookings.filter(b => myClassIds.has(b.class_instance_id) && b.status === 'confirmed');
-  const enrolledChildIds = new Set(myBookings.map(b => b.child_id));
-  const myStudents = allChildren.filter(c => enrolledChildIds.has(c.id));
-
-  const rows = myStudents.map(child => {
-    const booking = myBookings.find(b => b.child_id === child.id);
-    const cls = booking ? allClasses.find(c => c.id === booking.class_instance_id) : null;
-    return {
-      child,
-      subject: cls?.subject ?? '—',
-      day: cls?.day_of_week ?? '—',
-      source: booking?.source === 'term_credit' ? 'Term credit' : 'Individual',
-    };
+  const { data: slots = [] } = useQuery({
+    queryKey: qk.classSlots,
+    queryFn: () => dataClient.getClassSlots(),
   });
 
-  const selectedClass = selected
-    ? allClasses.find(c => c.id === myBookings.find(b => b.child_id === selected.id)?.class_instance_id)
-    : null;
+  const confirmedBookings = bookings.filter(b => b.status === 'confirmed');
+
+  // Build rows from embedded child data on bookings
+  const rows = confirmedBookings
+    .filter(b => b.child)
+    .map(b => {
+      const slot = slots.find(s => s.id === b.session?.class_id);
+      return {
+        child: b.child as Pick<Child, 'id' | 'name' | 'initials'> & Partial<Child>,
+        subject: b.session?.subject ?? slot?.subject ?? '—',
+        day: b.session ? new Date(b.session.starts_at).toLocaleDateString('en-AU', { weekday: 'long' }) : '—',
+        source: b.source === 'term_credit' ? 'Term credit' : 'Individual',
+        bookingId: b.id,
+      };
+    });
+
+  // Deduplicate by child id (show each child once)
+  const seen = new Set<string>();
+  const uniqueRows = rows.filter(r => { if (seen.has(r.child.id)) return false; seen.add(r.child.id); return true; });
+
+  const selectedBooking = selected ? confirmedBookings.find(b => b.child?.id === selected.id) : null;
+
+  if (isLoading) return <div className="page-stack"><p>Loading…</p></div>;
 
   return (
     <div className="page-stack">
@@ -56,23 +60,20 @@ export function TeacherStudentsView({ teacherId }: { teacherId: string }) {
         <div className="table-wrap">
           <table>
             <thead>
-              <tr>{['Student', 'Year', 'Class', 'Day', 'Booking type', ''].map((h, i) => <th key={i}>{h}</th>)}</tr>
+              <tr>{['Student', 'Class', 'Day', 'Booking type', ''].map((h, i) => <th key={i}>{h}</th>)}</tr>
             </thead>
             <tbody>
-              {rows.length === 0 && (
-                <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--muted)', padding: '24px' }}>No students enrolled in your classes yet.</td></tr>
+              {uniqueRows.length === 0 && (
+                <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)', padding: '24px' }}>No students enrolled in your classes yet.</td></tr>
               )}
-              {rows.map(({ child, subject, day, source }) => (
+              {uniqueRows.map(({ child, subject, day, source }) => (
                 <tr key={child.id}>
                   <td><strong className="table-name">{child.name}</strong></td>
-                  <td>{child.year}</td>
                   <td>{subject}</td>
                   <td>{day}</td>
                   <td><span className={`table-status ${source === 'Term credit' ? 'confirmed' : 'view'}`}>{source}</span></td>
                   <td>
-                    <button className="btn-view-profile" onClick={() => setSelected(child)}>
-                      View profile
-                    </button>
+                    <button className="btn-view-profile" onClick={() => setSelected(child as Child)}>View profile</button>
                   </td>
                 </tr>
               ))}
@@ -81,7 +82,6 @@ export function TeacherStudentsView({ teacherId }: { teacherId: string }) {
         </div>
       </div>
 
-      {/* Profile drawer */}
       {selected && (
         <div className="profile-drawer-overlay" onClick={() => setSelected(null)}>
           <div className="profile-drawer" onClick={e => e.stopPropagation()}>
@@ -89,63 +89,50 @@ export function TeacherStudentsView({ teacherId }: { teacherId: string }) {
               <div className="profile-drawer-avatar">{selected.initials}</div>
               <div>
                 <h3>{selected.name}</h3>
-                <span>{selected.year} · {selected.school}</span>
+                {selectedBooking?.session && (
+                  <span>{selectedBooking.session.subject} · {new Date(selectedBooking.session.starts_at).toLocaleDateString('en-AU', { weekday: 'long' })}</span>
+                )}
               </div>
               <button className="drawer-close" onClick={() => setSelected(null)}><X size={18} /></button>
             </div>
 
-            {selectedClass && (
-              <div className="profile-drawer-class-badge">
-                <span>{selectedClass.subject}</span>
-                <span>·</span>
-                <span>{selectedClass.day_of_week} {selectedClass.time}</span>
-              </div>
-            )}
-
             <div className="profile-drawer-body">
-
-              {selected.subjects && selected.subjects.length > 0 && (
+              {(selected as Child).subjects && (selected as Child).subjects!.length > 0 && (
                 <div className="profile-section">
                   <div className="profile-section-title"><BookOpen size={14} />Learning areas</div>
                   <div className="profile-tags">
-                    {selected.subjects.map(s => <span key={s} className="profile-tag">{s}</span>)}
+                    {(selected as Child).subjects!.map(s => <span key={s} className="profile-tag">{s}</span>)}
                   </div>
                 </div>
               )}
-
-              {selected.preferredDays && selected.preferredDays.length > 0 && (
+              {(selected as Child).preferredDays && (selected as Child).preferredDays!.length > 0 && (
                 <div className="profile-section">
                   <div className="profile-section-title"><Calendar size={14} />Preferred days</div>
                   <div className="profile-tags">
-                    {selected.preferredDays.map(d => <span key={d} className="profile-tag teal">{d}</span>)}
+                    {(selected as Child).preferredDays!.map(d => <span key={d} className="profile-tag teal">{d}</span>)}
                   </div>
                 </div>
               )}
-
-              {selected.goals && (
+              {(selected as Child).goals && (
                 <div className="profile-section">
                   <div className="profile-section-title"><Target size={14} />Learning goals</div>
-                  <p className="profile-text">{selected.goals}</p>
+                  <p className="profile-text">{(selected as Child).goals}</p>
                 </div>
               )}
-
-              {selected.notes && (
+              {(selected as Child).notes && (
                 <div className="profile-section">
                   <div className="profile-section-title"><MessageSquare size={14} />About this student</div>
-                  <p className="profile-text">{selected.notes}</p>
+                  <p className="profile-text">{(selected as Child).notes}</p>
                 </div>
               )}
-
-              {selected.preferredTutor && (
+              {(selected as Child).preferredTutor && (
                 <div className="profile-section">
                   <div className="profile-section-title"><User size={14} />Preferences</div>
-                  <div className="profile-pref-row"><span>Preferred tutor</span><strong>{selected.preferredTutor}</strong></div>
-                  {selected.sessions && <div className="profile-pref-row"><span>Sessions per week</span><strong>{selected.sessions}</strong></div>}
+                  <div className="profile-pref-row"><span>Preferred tutor</span><strong>{(selected as Child).preferredTutor}</strong></div>
                 </div>
               )}
-
-              {!selected.goals && !selected.notes && !selected.subjects?.length && (
-                <p style={{ color: 'var(--muted)', fontSize: 14 }}>No profile details on file yet. These are filled in during enrolment.</p>
+              {!(selected as Child).goals && !(selected as Child).notes && !(selected as Child).subjects?.length && (
+                <p style={{ color: 'var(--muted)', fontSize: 14 }}>No profile details on file yet.</p>
               )}
             </div>
           </div>

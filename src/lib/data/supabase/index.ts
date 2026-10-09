@@ -8,6 +8,9 @@ import { createCatalogMethods } from './catalog';
 import { createBookingsMethods } from './bookings';
 import { createPaymentsMethods } from './payments';
 import { createAssessmentsMethods } from './assessments';
+import { createReportsMethods } from './reports';
+import { createAttendanceMethods } from './attendance';
+import { createAdminMethods } from './admin';
 
 export function createSupabaseDataClient(sb: AppSupabase): Partial<DataClient> {
   return {
@@ -19,5 +22,8 @@ export function createSupabaseDataClient(sb: AppSupabase): Partial<DataClient> {
     ...createBookingsMethods(sb),
     ...createPaymentsMethods(sb),
     ...createAssessmentsMethods(sb),
+    ...createReportsMethods(sb),
+    ...createAttendanceMethods(sb),
+    ...createAdminMethods(sb),
   };
 }
