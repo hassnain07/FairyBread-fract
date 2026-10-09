@@ -1,25 +1,10 @@
-import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { Eye, EyeOff, ArrowRight, AlertCircle } from 'lucide-react';
 import { useAuth } from '../../../app/providers';
+import { homeFor } from '../../../app/RequireRole';
+import { toAppError } from '../../../lib/data/errors';
 import { SprinkleField } from '../../../components/ui/Sprinkles';
-
-// Mock credential map — replace with Supabase auth + profiles table lookup
-const MOCK_CREDENTIALS: Record<string, { password: string; role: 'parent' | 'admin' | 'teacher'; familyId?: string; name: string }> = {
-  'sarah@example.com':   { password: 'demo1234', role: 'parent',  familyId: 'f1', name: 'Sarah Johnson' },
-  'claire@example.com':  { password: 'demo1234', role: 'parent',  familyId: 'f2', name: 'Claire Brown' },
-  'james@example.com':   { password: 'demo1234', role: 'parent',  familyId: 'f3', name: 'James Taylor' },
-  'michael@example.com': { password: 'demo1234', role: 'parent',  familyId: 'f4', name: 'Michael Chen' },
-  'admin@fairybread.au': { password: 'admin1234', role: 'admin',  name: 'Therese' },
-  'jessica@fairybread.au': { password: 'tutor1234', role: 'teacher', name: 'Jessica Taylor' },
-  'sarah.w@fairybread.au': { password: 'tutor1234', role: 'teacher', name: 'Sarah Wilson' },
-};
-
-const ROLE_DESTINATIONS: Record<string, string> = {
-  parent: '/parent',
-  admin: '/admin',
-  teacher: '/teacher',
-};
 
 function Logo() {
   return (
@@ -32,37 +17,36 @@ function Logo() {
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const { setRole, setFamilyId } = useAuth();
+  const location = useLocation();
+  const { user, loading, signIn } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+
+  // Redirect already-signed-in users — on /login only
+  useEffect(() => {
+    if (!loading && user) {
+      const from = (location.state as { from?: string })?.from;
+      navigate(from ?? homeFor(user.role), { replace: true });
+    }
+  }, [user, loading, navigate, location.state]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
-    setLoading(true);
-
-    // Simulate network latency
-    await new Promise(r => setTimeout(r, 700));
-
-    const match = MOCK_CREDENTIALS[email.toLowerCase().trim()];
-
-    if (!match || match.password !== password) {
-      setError('Incorrect email or password. Please try again.');
-      setLoading(false);
-      return;
+    setSubmitting(true);
+    try {
+      const u = await signIn(email.trim().toLowerCase(), password);
+      const from = (location.state as { from?: string })?.from;
+      navigate(from ?? homeFor(u.role), { replace: true });
+    } catch (err) {
+      setError(toAppError(err).message);
+    } finally {
+      setSubmitting(false);
     }
-
-    // TODO: replace with Supabase signInWithPassword + profile role lookup
-    // const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    // const { data: profile } = await supabase.from('profiles').select('role, family_id').eq('id', data.user.id).single();
-
-    setRole(match.role);
-    if (match.familyId) setFamilyId(match.familyId);
-    navigate(ROLE_DESTINATIONS[match.role]);
   }
 
   return (
@@ -79,14 +63,6 @@ export function LoginPage() {
             <span className="auth-role-pill pink">Parents</span>
             <span className="auth-role-pill teal">Tutors</span>
             <span className="auth-role-pill yellow">Admin</span>
-          </div>
-          <div className="auth-demo-hint">
-            <strong>Demo credentials</strong>
-            <div className="auth-demo-rows">
-              <div><span>Parent</span><code>sarah@example.com</code><code>demo1234</code></div>
-              <div><span>Admin</span><code>admin@fairybread.au</code><code>admin1234</code></div>
-              <div><span>Tutor</span><code>jessica@fairybread.au</code><code>tutor1234</code></div>
-            </div>
           </div>
         </div>
       </div>
@@ -140,15 +116,16 @@ export function LoginPage() {
               </div>
             )}
 
-            <button type="submit" className="auth-submit" disabled={loading}>
-              {loading ? <span className="auth-spinner" /> : <><span>Sign in</span><ArrowRight size={16} /></>}
+            <button type="submit" className="auth-submit" disabled={submitting}>
+              {submitting
+                ? <span className="auth-spinner" />
+                : <><span>Sign in</span><ArrowRight size={16} /></>}
             </button>
           </form>
 
           <p className="auth-switch">
             New family? <Link to="/signup">Create an account</Link>
           </p>
-
           <p className="auth-back">
             <Link to="/">← Back to website</Link>
           </p>

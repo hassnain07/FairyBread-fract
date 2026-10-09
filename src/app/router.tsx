@@ -3,10 +3,12 @@ import { LandingPage } from '../features/marketing/pages/LandingPage';
 import { LoginPage } from '../features/auth/pages/LoginPage';
 import { SignupPage } from '../features/auth/pages/SignupPage';
 import { ForgotPasswordPage } from '../features/auth/pages/ForgotPasswordPage';
+import { ResetPasswordPage } from '../features/auth/pages/ResetPasswordPage';
 import { ParentLayout } from '../features/parent/pages/ParentLayout';
 import { AdminLayout } from '../features/admin/pages/AdminLayout';
 import { TeacherLayout } from '../features/teacher/pages/TeacherLayout';
 import { PublicShopPage } from '../features/marketing/pages/ShopPage';
+import { RequireRole } from './RequireRole';
 
 // Parent pages
 import { DashboardPage } from '../features/parent/pages/DashboardPage';
@@ -50,11 +52,14 @@ const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
   { path: '/signup', element: <SignupPage /> },
   { path: '/forgot-password', element: <ForgotPasswordPage /> },
+  { path: '/reset-password', element: <ResetPasswordPage /> },
   { path: '/shop', element: <PublicShopPage /> },
   {
-    path: '/parent',
-    element: <ParentLayout />,
-    children: [
+    element: <RequireRole allow={['parent']} />,
+    children: [{
+      path: '/parent',
+      element: <ParentLayout />,
+      children: [
       { index: true, element: <DashboardPage /> },
       { path: 'children', element: <ChildrenPage /> },
       { path: 'children/:childId', element: <ChildProfilePage /> },
@@ -69,11 +74,13 @@ const router = createBrowserRouter([
       { path: 'shop', element: <LearningShopPage /> },
       { path: 'orders', element: <MyOrdersPage /> },
     ],
-  },
+  }]},
   {
-    path: '/admin',
-    element: <AdminLayout />,
-    children: [
+    element: <RequireRole allow={['admin']} />,
+    children: [{
+      path: '/admin',
+      element: <AdminLayout />,
+      children: [
       { index: true, element: <AdminHomePage /> },
       { path: 'bookings', element: <AdminBookingsPage /> },
       { path: 'payments', element: <AdminPaymentsPage /> },
@@ -87,11 +94,13 @@ const router = createBrowserRouter([
       { path: 'my-teaching', element: <AdminMyTeachingPage /> },
       { path: 'orders', element: <AdminOrdersPage /> },
     ],
-  },
+  }]},
   {
-    path: '/teacher',
-    element: <TeacherLayout />,
-    children: [
+    element: <RequireRole allow={['teacher', 'admin']} />,
+    children: [{
+      path: '/teacher',
+      element: <TeacherLayout />,
+      children: [
       { index: true, element: <TeacherDashboardPage /> },
       { path: 'classes', element: <TeacherClassesPage /> },
       { path: 'students', element: <TeacherStudentsPage /> },
@@ -100,7 +109,7 @@ const router = createBrowserRouter([
       { path: 'reports', element: <TeacherReportsPage /> },
       { path: 'messages', element: <TeacherMessagesPage /> },
     ],
-  },
+  }]},
   { path: '*', element: <Navigate to="/" replace /> },
 ]);
 

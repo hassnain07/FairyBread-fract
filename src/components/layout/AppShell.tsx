@@ -1,12 +1,13 @@
-import { Bell, Check, ChevronRight, Menu, MoreHorizontal, PanelLeftClose, X } from 'lucide-react';
+import { Bell, Check, ChevronRight, LogOut, Menu, MoreHorizontal, PanelLeftClose, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../app/providers';
 import { useNotifications } from '../../hooks/useNotifications';
 import type { AppNotification } from '../../types/message';
+import type { Role } from '../../types/auth';
 
-export type Role = 'parent' | 'admin' | 'teacher';
+export type { Role };
 
 interface NavItem { id: string; label: string; icon: LucideIcon; }
 
@@ -20,15 +21,7 @@ interface AppShellProps {
   role: Role;
   menuOpen: boolean;
   onMenuToggle: () => void;
-  onSwitchRole?: () => void;
-  onHome?: () => void;
 }
-
-const roleLabels: Record<Role, { name: string; initials: string; workspace: string }> = {
-  parent: { name: 'Sarah Johnson', initials: 'SJ', workspace: 'Parent account' },
-  admin: { name: 'Therese', initials: 'TH', workspace: 'Admin workspace' },
-  teacher: { name: 'Jessica Taylor', initials: 'JT', workspace: 'Teacher portal' },
-};
 
 const notifColors: Record<string, string> = {
   booking_confirmed: 'teal', booking_cancelled: 'orange', payment_received: 'green',
@@ -46,9 +39,9 @@ function timeAgo(iso: string) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-function NotifDrawer({ familyId, teacherId, onClose }: { familyId?: string; teacherId?: string; onClose: () => void }) {
+function NotifDrawer({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
-  const { notifications, markRead, markAllRead } = useNotifications(familyId, teacherId);
+  const { notifications, markRead, markAllRead } = useNotifications();
 
   function handleClick(n: AppNotification) {
     if (!n.read) markRead.mutate(n.id);
@@ -102,14 +95,25 @@ function NotifDrawer({ familyId, teacherId, onClose }: { familyId?: string; teac
 }
 
 export function AppShell({ children, nav, active, onNavChange, title, subtitle, role, menuOpen, onMenuToggle }: AppShellProps) {
-  const { name, initials, workspace } = roleLabels[role];
-  const { familyId } = useAuth();
+  const { user, signOut } = useAuth();
   const [notifOpen, setNotifOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const { unreadCount } = useNotifications();
 
-  // Determine participant id for notifications
-  const notifFamilyId = role === 'parent' ? familyId : undefined;
-  const notifTeacherId = role === 'teacher' ? 'tch1' : undefined;
-  const { unreadCount } = useNotifications(notifFamilyId, notifTeacherId);
+  const displayName = user?.fullName || (role === 'admin' ? 'Admin' : role === 'teacher' ? 'Teacher' : 'Parent');
+  const initials = (() => {
+    if (!user) return role[0].toUpperCase();
+    const parts = (user.fullName || user.email || '').trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return '?';
+    if (parts.length === 1) return parts[0][0].toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  })();
+  const workspace = role === 'parent' ? 'Parent account' : role === 'admin' ? 'Admin workspace' : 'Teacher portal';
+
+  async function handleSignOut() {
+    setProfileOpen(false);
+    await signOut();
+  }
 
   return (
     <div className={`app-shell ${role}-app`}>
@@ -121,11 +125,21 @@ export function AppShell({ children, nav, active, onNavChange, title, subtitle, 
           </div>
           <button onClick={onMenuToggle}><PanelLeftClose size={18} /></button>
         </div>
-        <div className="side-profile">
+        <div className="side-profile" style={{ cursor: 'pointer' }} onClick={() => setProfileOpen(o => !o)}>
           <div className="profile-avatar">{initials}</div>
-          <div><strong>{name}</strong><span>{workspace}</span></div>
+          <div><strong>{displayName}</strong><span>{workspace}</span></div>
           <MoreHorizontal size={17} />
         </div>
+        {profileOpen && (
+          <div style={{ padding: '0 12px 8px' }}>
+            <button
+              onClick={handleSignOut}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 12px', borderRadius: 8, border: 'none', background: 'rgba(255,255,255,0.06)', color: 'inherit', cursor: 'pointer', fontSize: 13 }}
+            >
+              <LogOut size={14} /> Sign out
+            </button>
+          </div>
+        )}
         <nav className="side-nav" style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
           {nav.map(({ id, label, icon: Icon }) => (
             <button key={id} className={active === id ? 'active' : ''} onClick={() => { onNavChange(id); if (menuOpen) onMenuToggle(); }}>
@@ -151,39 +165,29 @@ export function AppShell({ children, nav, active, onNavChange, title, subtitle, 
               <Bell size={18} />
               {unreadCount > 0 && <i className="notif-badge">{unreadCount > 9 ? '9+' : unreadCount}</i>}
             </button>
-            <div className="header-avatar">{initials}</div>
+            <div className="header-avatar" style={{ cursor: 'pointer' }} onClick={() => setProfileOpen(o => !o)}>
+              {initials}
+            </div>
           </div>
         </header>
         <main className="app-main">{children}</main>
       </div>
-      {notifOpen && (
-        <NotifDrawer
-          familyId={notifFamilyId}
-          teacherId={notifTeacherId}
-          onClose={() => setNotifOpen(false)}
-        />
-      )}
+      {notifOpen && <NotifDrawer onClose={() => setNotifOpen(false)} />}
       <DemoBar active={role} />
     </div>
   );
 }
 
+// DemoBar remains for development convenience — removed in Phase 12
 function DemoBar({ active }: { active: Role }) {
   const navigate = useNavigate();
-  const { familyId, setFamilyId } = useAuth();
+  const { signOut } = useAuth();
 
   const portals: { label: string; path: string; role: Role | 'home' }[] = [
     { label: 'Website', path: '/', role: 'home' },
     { label: 'Parent', path: '/parent', role: 'parent' },
     { label: 'Admin', path: '/admin', role: 'admin' },
     { label: 'Teacher', path: '/teacher', role: 'teacher' },
-  ];
-
-  const families: { label: string; id: string; desc: string }[] = [
-    { label: 'f1', id: 'f1', desc: 'Active term, 3 credits' },
-    { label: 'f2', id: 'f2', desc: 'Active term, 0 credits' },
-    { label: 'f3', id: 'f3', desc: 'Term expired' },
-    { label: 'f4', id: 'f4', desc: 'No term ever' },
   ];
 
   const btnBase: React.CSSProperties = {
@@ -193,24 +197,16 @@ function DemoBar({ active }: { active: Role }) {
 
   return (
     <div style={{ position: 'fixed', bottom: 16, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 6, background: '#23312f', borderRadius: 999, padding: '7px 14px', zIndex: 9999, boxShadow: '0 4px 24px rgba(0,0,0,.3)', flexWrap: 'wrap', maxWidth: '90vw' }}>
-      <span style={{ color: '#75817d', fontSize: 11, marginRight: 2 }}>Portal</span>
+      <span style={{ color: '#75817d', fontSize: 11, marginRight: 2 }}>Dev</span>
       {portals.map(({ label, path, role }) => (
         <button key={path} onClick={() => navigate(path)} style={{ ...btnBase, background: role === active ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.08)', fontWeight: role === active ? 600 : 400 }}>
           {label}
         </button>
       ))}
       <span style={{ color: '#4a5e59', margin: '0 4px' }}>|</span>
-      <span style={{ color: '#75817d', fontSize: 11, marginRight: 2 }}>Family</span>
-      {families.map(f => (
-        <button
-          key={f.id}
-          onClick={() => setFamilyId(f.id)}
-          title={f.desc}
-          style={{ ...btnBase, background: familyId === f.id ? 'rgba(68,183,189,.4)' : 'rgba(255,255,255,.08)', fontWeight: familyId === f.id ? 600 : 400 }}
-        >
-          {f.label}
-        </button>
-      ))}
+      <button onClick={() => signOut()} style={{ ...btnBase, background: 'rgba(255,80,80,.2)' }}>
+        Sign out
+      </button>
     </div>
   );
 }

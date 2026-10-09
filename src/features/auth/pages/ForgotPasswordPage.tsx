@@ -3,6 +3,9 @@ import { useNavigate, Link } from 'react-router-dom';
 import { ArrowRight, Check, Eye, EyeOff, Lock, Mail } from 'lucide-react';
 import { SprinkleField } from '../../../components/ui/Sprinkles';
 import { OtpInput } from '../components/OtpInput';
+import { dataClient } from '../../../lib/data/client';
+import { toAppError } from '../../../lib/data/errors';
+import { useAuth } from '../../../app/providers';
 
 const STEPS = ['Enter email', 'Verify code', 'New password', 'Done'];
 
@@ -39,6 +42,9 @@ function PasswordStrength({ password }: { password: string }) {
 
 export function ForgotPasswordPage() {
   const navigate = useNavigate();
+  const { signOut } = useAuth();
+  // NOTE: No redirect-if-signed-in effect here — verifyOtp creates a recovery session mid-flow.
+
   const [step, setStep] = useState(0);
   const [email, setEmail] = useState('');
   const [emailError, setEmailError] = useState('');
@@ -48,21 +54,25 @@ export function ForgotPasswordPage() {
   const [showPw, setShowPw] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [serverError, setServerError] = useState('');
 
   async function handleEmailSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!email.includes('@')) { setEmailError('Please enter a valid email address.'); return; }
     setEmailError('');
     setLoading(true);
-    // TODO: supabase.auth.resetPasswordForEmail(email) or signInWithOtp({ email })
-    await new Promise(r => setTimeout(r, 700));
+    // Always advance — requestPasswordResetOtp never reveals whether the email exists
+    await dataClient.requestPasswordResetOtp!(email.trim().toLowerCase());
     setLoading(false);
-    setStep(1); // always advance — no enumeration
+    setStep(1);
+  }
+
+  async function handleVerify(code: string) {
+    await dataClient.verifyOtp!(email.trim().toLowerCase(), code, 'recovery');
   }
 
   async function handleResend() {
-    // TODO: re-send OTP via Supabase
-    await new Promise(r => setTimeout(r, 500));
+    await dataClient.requestPasswordResetOtp!(email.trim().toLowerCase());
   }
 
   async function handlePasswordSubmit(e: React.FormEvent) {
@@ -72,11 +82,18 @@ export function ForgotPasswordPage() {
     if (password !== confirmPassword) errs.confirm = 'Passwords do not match.';
     if (Object.keys(errs).length) { setPwErrors(errs); return; }
     setPwErrors({});
+    setServerError('');
     setLoading(true);
-    // TODO: supabase.auth.updateUser({ password })
-    await new Promise(r => setTimeout(r, 800));
-    setLoading(false);
-    setStep(3);
+    try {
+      await dataClient.setPassword!(password);
+      // Sign out after password reset — user must log in with the new password
+      await signOut();
+      setStep(3);
+    } catch (err) {
+      setServerError(toAppError(err).message);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -141,6 +158,7 @@ export function ForgotPasswordPage() {
               heading="Check your email"
               subheading={<>We sent a 6-digit code to <strong>{email}</strong>. Enter it below.</>}
               stepLabel="Step 2 of 3"
+              onVerify={handleVerify}
               onVerified={() => setStep(2)}
               onBack={() => setStep(0)}
               onResend={handleResend}
@@ -191,6 +209,9 @@ export function ForgotPasswordPage() {
                   </div>
                   {pwErrors.confirm && <span className="auth-field-error">{pwErrors.confirm}</span>}
                 </div>
+                {serverError && (
+                  <div className="auth-error"><span>{serverError}</span></div>
+                )}
                 <div className="auth-form-actions">
                   <button type="button" className="auth-back-btn" onClick={() => setStep(1)}>← Back</button>
                   <button type="submit" className="auth-submit" disabled={loading}>
@@ -208,7 +229,7 @@ export function ForgotPasswordPage() {
                 <Check size={28} />
               </div>
               <h2>Password updated!</h2>
-              <p>Your password has been reset successfully. You can now sign in with your new password.</p>
+              <p>Your password has been reset successfully. Sign in with your new password to continue.</p>
               <button className="auth-submit" onClick={() => navigate('/login')}>
                 <span>Sign in now</span><ArrowRight size={16} />
               </button>

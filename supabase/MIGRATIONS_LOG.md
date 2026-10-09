@@ -22,3 +22,5 @@ Format: `file · project · date · who`
 | `0013_auth_otp_hygiene.sql` | fairybread-dev | 2025 | You | Phase 2 — OTP hygiene cron job (10th cron job) |
 | `seed.sql` | fairybread-dev | 2025 | You | Phase 2 — demo world seed (7 users, 6 products, 3 orders) |
 | `dev_reset.sql` | fairybread-dev | 2025 | You | Phase 2 — wipe script created; rehearsal run confirmed |
+| *(Phase 3 — no SQL run)* | — | — | — | Frontend infrastructure only; no migrations |
+| *(Phase 4 — no SQL run)* | — | — | — | Auth wiring; no migrations |

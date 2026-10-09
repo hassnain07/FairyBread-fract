@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Eye, EyeOff, ArrowRight, AlertCircle, Check, User, Mail, Lock, Phone } from 'lucide-react';
-import { useAuth } from '../../../app/providers';
 import { SprinkleField } from '../../../components/ui/Sprinkles';
 import { OtpInput } from '../components/OtpInput';
+import { dataClient } from '../../../lib/data/client';
+import { toAppError } from '../../../lib/data/errors';
 
 interface SignupForm {
   firstName: string;
@@ -72,7 +73,8 @@ function PasswordStrength({ password }: { password: string }) {
 
 export function SignupPage() {
   const navigate = useNavigate();
-  const { setRole, setFamilyId } = useAuth();
+  // NOTE: No redirect-if-signed-in effect here — verifyOtp creates a session mid-flow
+  // and we must not redirect the user away before the password step.
 
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<SignupForm>(EMPTY);
@@ -92,15 +94,33 @@ export function SignupPage() {
     const errs = validateDetails(form);
     if (Object.keys(errs).length) { setErrors(errs); return; }
     setLoading(true);
-    // TODO: supabase.auth.signInWithOtp({ email: form.email })
-    await new Promise(r => setTimeout(r, 700));
-    setLoading(false);
-    setStep(1);
+    setServerError('');
+    try {
+      await dataClient.requestSignupOtp!({
+        email: form.email.trim().toLowerCase(),
+        firstName: form.firstName.trim(),
+        lastName: form.lastName.trim(),
+        phone: form.phone.trim() || undefined,
+      });
+      setStep(1);
+    } catch (err) {
+      setServerError(toAppError(err).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleVerify(code: string) {
+    await dataClient.verifyOtp!(form.email.trim().toLowerCase(), code, 'signup');
   }
 
   async function handleResend() {
-    // TODO: re-send OTP via Supabase
-    await new Promise(r => setTimeout(r, 500));
+    await dataClient.requestSignupOtp!({
+      email: form.email.trim().toLowerCase(),
+      firstName: form.firstName.trim(),
+      lastName: form.lastName.trim(),
+      phone: form.phone.trim() || undefined,
+    });
   }
 
   async function handlePassword(e: React.FormEvent) {
@@ -109,13 +129,14 @@ export function SignupPage() {
     if (Object.keys(errs).length) { setErrors(errs); return; }
     setLoading(true);
     setServerError('');
-    // TODO: supabase.auth.signUp({ email: form.email, password: form.password })
-    //       + profiles insert + families insert
-    await new Promise(r => setTimeout(r, 900));
-    setRole('parent');
-    setFamilyId('f4');
-    setStep(3);
-    setLoading(false);
+    try {
+      await dataClient.setPassword!(form.password);
+      setStep(3);
+    } catch (err) {
+      setServerError(toAppError(err).message);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -184,6 +205,9 @@ export function SignupPage() {
                   <input id="phone" type="tel" autoComplete="tel" placeholder="04xx xxx xxx" value={form.phone} onChange={e => set('phone', e.target.value)} />
                   {errors.phone && <span className="auth-field-error">{errors.phone}</span>}
                 </div>
+                {serverError && (
+                  <div className="auth-error"><AlertCircle size={15} /><span>{serverError}</span></div>
+                )}
                 <button type="submit" className="auth-submit" disabled={loading}>
                   {loading ? <span className="auth-spinner" /> : <><span>Continue</span><ArrowRight size={16} /></>}
                 </button>
@@ -199,6 +223,7 @@ export function SignupPage() {
               heading="Verify your email"
               subheading={<>We sent a 6-digit code to <strong>{form.email}</strong>. Enter it below.</>}
               stepLabel="Step 2 of 3"
+              onVerify={handleVerify}
               onVerified={() => setStep(2)}
               onBack={() => setStep(0)}
               onResend={handleResend}
