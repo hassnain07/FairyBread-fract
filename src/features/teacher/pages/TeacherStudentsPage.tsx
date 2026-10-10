@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { X, BookOpen, Calendar, Target, MessageSquare, User } from 'lucide-react';
+import { TableControls } from '../../../components/ui/TableControls';
+import { usePagination, useSearch } from '../../../hooks/usePagination';
 import { dataClient } from '../../../lib/data/client';
 import { useAuth } from '../../../app/providers';
 import { qk } from '../../../lib/data/queryKeys';
@@ -48,6 +50,14 @@ export function TeacherStudentsView({ teacherIdOverride }: { teacherIdOverride?:
 
   const selectedBooking = selected ? confirmedBookings.find(b => b.child?.id === selected.id) : null;
 
+  const { search, onSearch } = useSearch(() => onPage(1));
+  const searchFiltered = uniqueRows.filter(r => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return r.child.name.toLowerCase().includes(q) || r.subject.toLowerCase().includes(q);
+  });
+  const { page, totalPages, paged, onPage, total } = usePagination(searchFiltered);
+
   if (isLoading) return <div className="page-stack"><p>Loading…</p></div>;
 
   return (
@@ -57,30 +67,31 @@ export function TeacherStudentsView({ teacherIdOverride }: { teacherIdOverride?:
       </div>
 
       <div className="card table-card">
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>{['Student', 'Class', 'Day', 'Booking type', ''].map((h, i) => <th key={i}>{h}</th>)}</tr>
-            </thead>
-            <tbody>
-              {uniqueRows.length === 0 && (
-                <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)', padding: '24px' }}>No students enrolled in your classes yet.</td></tr>
-              )}
-              {uniqueRows.map(({ child, subject, day, source }) => (
-                <tr key={child.id}>
-                  <td><strong className="table-name">{child.name}</strong></td>
-                  <td>{subject}</td>
-                  <td>{day}</td>
-                  <td><span className={`table-status ${source === 'Term credit' ? 'confirmed' : 'view'}`}>{source}</span></td>
-                  <td>
-                    <button className="btn-view-profile" onClick={() => setSelected(child as Child)}>View profile</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <TableControls search={search} onSearch={onSearch} page={page} totalPages={totalPages} total={total} onPage={onPage} placeholder="Search student or subject…" />
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>{['Student', 'Class', 'Day', 'Booking type', ''].map((h, i) => <th key={i}>{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                {paged.length === 0 && (
+                  <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)', padding: '24px' }}>No students found.</td></tr>
+                )}
+                {paged.map(({ child, subject, day, source }) => (
+                  <tr key={child.id}>
+                    <td><strong className="table-name">{child.name}</strong></td>
+                    <td>{subject}</td>
+                    <td>{day}</td>
+                    <td><span className={`table-status ${source === 'Term credit' ? 'confirmed' : 'view'}`}>{source}</span></td>
+                    <td>
+                      <button className="btn-view-profile" onClick={() => setSelected(child as Child)}>View profile</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
 
       {selected && (
         <div className="profile-drawer-overlay" onClick={() => setSelected(null)}>

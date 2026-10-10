@@ -4,6 +4,8 @@ export type AdminStats = {
   classes_today: number;
   pending_payments: number;
   reports_due: number;
+  revenue_this_month_cents: number;
+  weekly_attendance: { week: string; rate: number }[];
 };
 
 export type Closure = {

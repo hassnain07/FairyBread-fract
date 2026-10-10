@@ -47,6 +47,7 @@ export function BookAssessmentPage() {
   const [selectedChildId, setSelectedChildId] = useState('');
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [selectedSlot, setSelectedSlot] = useState('');
+  const [calMonth, setCalMonth] = useState<{ year: number; month: number } | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState('');
   const [submitError, setSubmitError] = useState('');
@@ -85,6 +86,28 @@ export function BookAssessmentPage() {
   const refCode = family?.reference_code ?? familyId;
 
   const availableDates = buildAvailableDates(weekdays, leadDays, horizonDays, closures);
+
+  const firstAvail = availableDates[0];
+  const lastAvail = availableDates[availableDates.length - 1];
+  const calYear = calMonth?.year ?? firstAvail?.getFullYear() ?? new Date().getFullYear();
+  const calMon = calMonth?.month ?? firstAvail?.getMonth() ?? new Date().getMonth();
+
+  const availableSet = new Set(availableDates.map(d => d.toISOString().slice(0, 10)));
+
+  function calDays(): (Date | null)[] {
+    const first = new Date(calYear, calMon, 1);
+    const startPad = first.getDay(); // 0=Sun
+    const daysInMonth = new Date(calYear, calMon + 1, 0).getDate();
+    const cells: (Date | null)[] = Array(startPad).fill(null);
+    for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(calYear, calMon, d));
+    return cells;
+  }
+
+  const canPrevMonth = firstAvail ? (calYear > firstAvail.getFullYear() || calMon > firstAvail.getMonth()) : false;
+  const canNextMonth = lastAvail ? (calYear < lastAvail.getFullYear() || calMon < lastAvail.getMonth()) : false;
+
+  function prevMonth() { const d = new Date(calYear, calMon - 1, 1); setCalMonth({ year: d.getFullYear(), month: d.getMonth() }); }
+  function nextMonth() { const d = new Date(calYear, calMon + 1, 1); setCalMonth({ year: d.getFullYear(), month: d.getMonth() }); }
 
   const selectedChild = children.find(c => c.id === selectedChildId) ?? children[0];
 
@@ -139,7 +162,7 @@ export function BookAssessmentPage() {
             <div className="divider" />
             <div className="success-detail-row total"><span>Payment status</span><b className="pending-badge">Pending Verification</b></div>
           </div>
-          <Button onClick={() => { setStep(1); setFile(null); setSelectedChildId(''); setSelectedDate(null); setSelectedSlot(''); }} icon={ArrowRight}>Back to dashboard</Button>
+          <Button onClick={() => { setStep(1); setFile(null); setSelectedChildId(''); setSelectedDate(null); setSelectedSlot(''); setCalMonth(null); }} icon={ArrowRight}>Back to dashboard</Button>
         </div>
       </div>
     );
@@ -172,7 +195,7 @@ export function BookAssessmentPage() {
                     </button>
                   ))}
                 </div>
-                <Button className="full" disabled={children.length === 0} onClick={() => setStep(2)} icon={ArrowRight}>Continue</Button>
+                <Button className="full" disabled={children.length === 0} onClick={() => { setCalMonth(null); setStep(2); }} icon={ArrowRight}>Continue</Button>
               </>
             )}
 
@@ -182,24 +205,34 @@ export function BookAssessmentPage() {
                 <h3>Pick a day that works</h3>
                 {availableDates.length === 0 && <p style={{ color: 'var(--muted)', fontSize: 13 }}>No available dates right now. Please contact us.</p>}
                 <div className="calendar-head">
-                  <button onClick={() => setStep(1)}>‹</button>
-                  <strong>{availableDates[0] ? `${MONTH_NAMES[availableDates[0].getMonth()]} ${availableDates[0].getFullYear()}` : ''}</strong>
-                  <span />
+                  <button onClick={prevMonth} disabled={!canPrevMonth} style={{ opacity: canPrevMonth ? 1 : 0.25 }}>‹</button>
+                  <strong>{MONTH_NAMES[calMon]} {calYear}</strong>
+                  <button onClick={nextMonth} disabled={!canNextMonth} style={{ opacity: canNextMonth ? 1 : 0.25 }}>›</button>
                 </div>
-                <div className="slots" style={{ flexDirection: 'column', gap: 8 }}>
-                  {availableDates.slice(0, 10).map(d => {
+                <div className="calendar-week">
+                  {DAY_NAMES.map(n => <span key={n}>{n}</span>)}
+                </div>
+                <div className="calendar-days">
+                  {calDays().map((d, i) => {
+                    if (!d) return <span key={i} />;
                     const iso = d.toISOString().slice(0, 10);
+                    const avail = availableSet.has(iso);
                     const isSelected = selectedDate?.toISOString().slice(0, 10) === iso;
                     return (
-                      <button key={iso} className={isSelected ? 'selected' : ''} onClick={() => setSelectedDate(d)}
-                        style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderRadius: 10, border: `1px solid ${isSelected ? 'var(--pink)' : 'var(--line)'}`, background: isSelected ? 'var(--pink-soft)' : 'transparent', cursor: 'pointer', textAlign: 'left' }}>
-                        <span style={{ fontWeight: 600, fontSize: 13 }}>{DAY_NAMES[d.getDay()]}</span>
-                        <span style={{ fontSize: 13 }}>{d.toLocaleDateString('en-AU', { day: 'numeric', month: 'long' })}</span>
-                        {isSelected && <Check size={15} style={{ marginLeft: 'auto', color: 'var(--pink)' }} />}
+                      <button key={iso}
+                        className={isSelected ? 'selected' : avail ? 'available' : ''}
+                        disabled={!avail}
+                        onClick={() => setSelectedDate(d)}>
+                        {d.getDate()}
                       </button>
                     );
                   })}
                 </div>
+                {selectedDate && (
+                  <p style={{ fontSize: 12, color: 'var(--pink)', marginTop: 12, fontWeight: 600 }}>
+                    ✓ {selectedDate.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })}
+                  </p>
+                )}
                 <div className="form-actions" style={{ marginTop: 16 }}>
                   <Button variant="ghost" onClick={() => setStep(1)}>Back</Button>
                   <Button disabled={!selectedDate} onClick={() => setStep(3)} icon={ArrowRight}>Continue</Button>
@@ -253,9 +286,9 @@ export function BookAssessmentPage() {
                 </div>
                 <div className="bank-details-card">
                   <div className="bank-details-head"><CircleDollarSign size={18} /><span>Bank transfer details</span></div>
-                  <div className="bank-detail-row"><span>Account name</span><b>{bank.account_name ?? 'Fairybread & Fractions Tutoring'}</b></div>
+                  <div className="bank-detail-row"><span>Account name</span><b>{bank.account_name ?? '—'}</b></div>
                   <div className="bank-detail-row"><span>BSB</span><b>{bank.bsb ?? '—'}</b></div>
-                  <div className="bank-detail-row"><span>Account number</span><b>{bank.account_number ?? '—'}</b></div>
+                  <div className="bank-detail-row"><span>Account number</span><b>{bank.account ?? '—'}</b></div>
                   <div className="bank-detail-row"><span>Reference</span><b>{refCode}-ASSESS</b></div>
                 </div>
                 <div className="form-actions">

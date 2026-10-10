@@ -31,5 +31,5 @@ insert into public.app_settings (key, value, description, is_public) values
    'horizon_days', 42),
  'TODO: confirm with client — which days/slots parents can book assessments.', false),
 
-('session_generation', jsonb_build_object('weeks_ahead', 12), 'How far ahead class_sessions are generated.', false);
+('session_generation', jsonb_build_object('weeks_ahead', 10), 'How far ahead class_sessions are generated.', false);
 -- `public_info` (bank + contact, anon-readable) and `shop` settings are inserted by migration 0012b.

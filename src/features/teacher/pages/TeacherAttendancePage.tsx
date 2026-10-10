@@ -1,5 +1,5 @@
 import { Check, X } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '../../../components/ui/Button';
 import { dataClient } from '../../../lib/data/client';
@@ -12,8 +12,6 @@ type Status = AttendanceRecord['status'];
 const STATUS_OPTS: { value: Status; label: string }[] = [
   { value: 'present', label: 'Present' },
   { value: 'absent', label: 'Absent' },
-  { value: 'no_show', label: 'No-show' },
-  { value: 'late', label: 'Late' },
 ];
 
 export function TeacherAttendancePage() {
@@ -21,7 +19,7 @@ export function TeacherAttendancePage() {
 }
 
 export function TeacherAttendanceView({ teacherIdOverride }: { teacherIdOverride?: string }) {
-  const { teacherId: authTeacherId } = useAuth();
+  const { teacherId: authTeacherId, loading: authLoading } = useAuth();
   const teacherId = teacherIdOverride ?? authTeacherId;
   const qc = useQueryClient();
 
@@ -30,13 +28,17 @@ export function TeacherAttendanceView({ teacherIdOverride }: { teacherIdOverride
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
 
-  const twoWeeksAgo = new Date(Date.now() - 14 * 86400_000).toISOString();
-  const tomorrow = new Date(Date.now() + 86400_000).toISOString();
+  const twoWeeksAgo = useMemo(() => new Date(Date.now() - 14 * 86400_000).toISOString(), []);
+  const oneWeekAhead = useMemo(() => new Date(Date.now() + 7 * 86400_000).toISOString(), []);
 
-  const { data: sessions = [], isLoading } = useQuery({
-    queryKey: qk.sessions({ teacherId, from: twoWeeksAgo, to: tomorrow }),
-    queryFn: () => dataClient.getUpcomingSessions({ teacherId, from: twoWeeksAgo, to: tomorrow }),
-    enabled: !!teacherId,
+  // Wait for auth to finish before deciding what teacherId to use
+  const resolvedTeacherId = authLoading ? null : (teacherId || null);
+
+
+  const { data: sessions = [], isLoading: sessionsLoading } = useQuery({
+    queryKey: qk.sessions({ teacherId: resolvedTeacherId, from: twoWeeksAgo, to: oneWeekAhead }),
+    queryFn: () => dataClient.getUpcomingSessions({ teacherId: resolvedTeacherId ?? undefined, from: twoWeeksAgo, to: oneWeekAhead }),
+    enabled: !authLoading,
   });
 
   const activeSessionId = selectedSessionId || sessions[0]?.id || '';
@@ -58,7 +60,7 @@ export function TeacherAttendanceView({ teacherIdOverride }: { teacherIdOverride
   const { data: bookings = [] } = useQuery({
     queryKey: qk.teacherBookings,
     queryFn: () => dataClient.getBookingsForTeacher(),
-    enabled: !!teacherId,
+    enabled: !authLoading,
   });
 
   const sessionBookings = bookings.filter(b => b.class_session_id === activeSessionId && b.status === 'confirmed');
@@ -78,7 +80,7 @@ export function TeacherAttendanceView({ teacherIdOverride }: { teacherIdOverride
 
   const handleReset = () => { setStatuses({}); setSaved(false); setError(''); };
 
-  if (isLoading) return <div className="page-stack narrow-page"><p>Loading…</p></div>;
+  if (authLoading) return <div className="page-stack narrow-page"><p>Loading…</p></div>;
 
   return (
     <div className="page-stack narrow-page">
@@ -106,9 +108,15 @@ export function TeacherAttendanceView({ teacherIdOverride }: { teacherIdOverride
         </div>
       )}
 
-      {sessions.length === 0 && (
+      {sessionsLoading && (
         <div className="card" style={{ padding: 20 }}>
-          <p className="empty-state-text">No sessions in the past two weeks.</p>
+          <p className="empty-state-text">Loading sessions…</p>
+        </div>
+      )}
+
+      {!sessionsLoading && sessions.length === 0 && (
+        <div className="card" style={{ padding: 20 }}>
+          <p className="empty-state-text">No sessions found in the past 2 weeks or upcoming week.</p>
         </div>
       )}
 

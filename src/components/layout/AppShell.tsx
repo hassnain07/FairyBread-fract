@@ -1,6 +1,6 @@
-import { Bell, Check, ChevronRight, LogOut, Menu, MoreHorizontal, PanelLeftClose, X } from 'lucide-react';
+import { Bell, Check, ChevronRight, LogOut, Menu, PanelLeftClose, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../app/providers';
 import { useNotifications } from '../../hooks/useNotifications';
@@ -139,12 +139,76 @@ function NotifDrawer({ onClose }: { onClose: () => void }) {
   );
 }
 
+function SignOutModal({ displayName, onConfirm, onCancel, isPending }: {
+  displayName: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  isPending: boolean;
+}) {
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 360 }}>
+        <div className="modal-icon cancel">
+          <LogOut size={22} />
+        </div>
+        <h2>Sign out?</h2>
+        <p>You're signed in as <strong>{displayName}</strong>. You'll need to sign in again to access your portal.</p>
+        <button className="btn btn-primary" style={{ width: '100%', background: '#e85a5a' }} onClick={onConfirm} disabled={isPending}>
+          {isPending ? 'Signing out…' : 'Yes, sign out'}
+        </button>
+        <button className="modal-cancel" onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+interface ProfileDropdownProps {
+  initials: string;
+  displayName: string;
+  email: string;
+  workspace: string;
+  onSignOut: () => void;
+  onClose: () => void;
+}
+
+function ProfileDropdown({ initials, displayName, email, workspace, onSignOut, onClose }: ProfileDropdownProps) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    }
+    const t = setTimeout(() => document.addEventListener('mousedown', handleClick), 0);
+    return () => { clearTimeout(t); document.removeEventListener('mousedown', handleClick); };
+  }, [onClose]);
+
+  return (
+    <div className="profile-dropdown" ref={ref}>
+      <div className="profile-dropdown-head">
+        <div className="profile-dropdown-avatar">{initials}</div>
+        <div>
+          <strong>{displayName}</strong>
+          <span>{email}</span>
+          <span className="profile-dropdown-role">{workspace}</span>
+        </div>
+      </div>
+      <div className="profile-dropdown-divider" />
+      <button className="profile-dropdown-signout" onClick={onSignOut}>
+        <LogOut size={15} />
+        Sign out
+      </button>
+    </div>
+  );
+}
+
 interface Toast { id: number; title: string; body: string; }
 
 export function AppShell({ children, nav, active, onNavChange, title, subtitle, role, menuOpen, onMenuToggle }: AppShellProps) {
   const { user, signOut } = useAuth();
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [signOutOpen, setSignOutOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const { unreadCount } = useNotifications();
 
@@ -156,8 +220,6 @@ export function AppShell({ children, nav, active, onNavChange, title, subtitle, 
 
   useRealtime(showToast);
 
-  // Show a toast for foreground FCM pushes (the Realtime channel handles bell updates;
-  // this only adds the visible toast when the tab is focused).
   useEffect(() => {
     let unsub: (() => void) | undefined;
     import('../../lib/push/webPush').then(({ onForegroundPush }) => {
@@ -167,6 +229,7 @@ export function AppShell({ children, nav, active, onNavChange, title, subtitle, 
   }, [showToast]);
 
   const displayName = user?.fullName || (role === 'admin' ? 'Admin' : role === 'teacher' ? 'Teacher' : 'Parent');
+  const email = user?.email ?? '';
   const initials = (() => {
     if (!user) return role[0].toUpperCase();
     const parts = (user.fullName || user.email || '').trim().split(/\s+/).filter(Boolean);
@@ -176,14 +239,21 @@ export function AppShell({ children, nav, active, onNavChange, title, subtitle, 
   })();
   const workspace = role === 'parent' ? 'Parent account' : role === 'admin' ? 'Admin workspace' : 'Teacher portal';
 
-  async function handleSignOut() {
+  function openSignOut() {
     setProfileOpen(false);
+    setSignOutOpen(true);
+  }
+
+  async function handleConfirmSignOut() {
+    setSigningOut(true);
     await signOut();
+    setSigningOut(false);
+    setSignOutOpen(false);
   }
 
   return (
     <div className={`app-shell ${role}-app`}>
-      <aside className={menuOpen ? 'open' : ''} style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <aside className={menuOpen ? 'open' : ''} style={{ display: 'flex', flexDirection: 'column' }}>
         <div className="side-brand">
           <div className="brand brand-compact">
             <img src="/assets/image.png" alt="Fairybread & Fractions" />
@@ -191,21 +261,12 @@ export function AppShell({ children, nav, active, onNavChange, title, subtitle, 
           </div>
           <button onClick={onMenuToggle}><PanelLeftClose size={18} /></button>
         </div>
-        <div className="side-profile" style={{ cursor: 'pointer' }} onClick={() => setProfileOpen(o => !o)}>
+
+        <div className="side-profile">
           <div className="profile-avatar">{initials}</div>
           <div><strong>{displayName}</strong><span>{workspace}</span></div>
-          <MoreHorizontal size={17} />
         </div>
-        {profileOpen && (
-          <div style={{ padding: '0 12px 8px' }}>
-            <button
-              onClick={handleSignOut}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 12px', borderRadius: 8, border: 'none', background: 'rgba(255,255,255,0.06)', color: 'inherit', cursor: 'pointer', fontSize: 13 }}
-            >
-              <LogOut size={14} /> Sign out
-            </button>
-          </div>
-        )}
+
         <nav className="side-nav" style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
           {nav.map(({ id, label, icon: Icon }) => (
             <button key={id} className={active === id ? 'active' : ''} onClick={() => { onNavChange(id); if (menuOpen) onMenuToggle(); }}>
@@ -215,6 +276,9 @@ export function AppShell({ children, nav, active, onNavChange, title, subtitle, 
           ))}
         </nav>
       </aside>
+
+      {menuOpen && <div className="sidebar-backdrop" onClick={onMenuToggle} />}
+
       <div className="app-content">
         <header className="app-header">
           <button className="mobile-menu" onClick={onMenuToggle}><Menu size={22} /></button>
@@ -231,14 +295,37 @@ export function AppShell({ children, nav, active, onNavChange, title, subtitle, 
               <Bell size={18} />
               {unreadCount > 0 && <i className="notif-badge">{unreadCount > 9 ? '9+' : unreadCount}</i>}
             </button>
-            <div className="header-avatar" style={{ cursor: 'pointer' }} onClick={() => setProfileOpen(o => !o)}>
-              {initials}
+            <div style={{ position: 'relative' }}>
+              <button className="header-avatar" onClick={() => setProfileOpen(o => !o)} title="Account">
+                {initials}
+              </button>
+              {profileOpen && (
+                <ProfileDropdown
+                  initials={initials}
+                  displayName={displayName}
+                  email={email}
+                  workspace={workspace}
+                  onSignOut={openSignOut}
+                  onClose={() => setProfileOpen(false)}
+                />
+              )}
             </div>
           </div>
         </header>
         <main className="app-main">{children}</main>
       </div>
+
       {notifOpen && <NotifDrawer onClose={() => setNotifOpen(false)} />}
+
+      {signOutOpen && (
+        <SignOutModal
+          displayName={displayName}
+          onConfirm={handleConfirmSignOut}
+          onCancel={() => setSignOutOpen(false)}
+          isPending={signingOut}
+        />
+      )}
+
       <div style={{ position: 'fixed', bottom: 16, right: 16, zIndex: 9998, display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 320 }}>
         {toasts.map(t => (
           <div key={t.id} className="card" style={{ padding: '10px 14px', boxShadow: '0 4px 16px rgba(0,0,0,.2)', cursor: 'default' }}>
@@ -250,5 +337,3 @@ export function AppShell({ children, nav, active, onNavChange, title, subtitle, 
     </div>
   );
 }
-
-

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ShoppingBag, X, Printer, ExternalLink } from 'lucide-react';
+import { TableControls } from '../../../components/ui/TableControls';
+import { usePagination, useSearch } from '../../../hooks/usePagination';
 import { dataClient } from '../../../lib/data/client';
 import { qk } from '../../../lib/data/queryKeys';
 import { toAppError } from '../../../lib/data/errors';
@@ -197,78 +199,92 @@ export function AdminOrdersPage() {
 
   const contactEmail = (settings as any)?.public_info?.contact_email ?? 'admin@fairybread.au';
   const pending = orders.filter(o => o.payment_status === 'pending_verification');
-  const displayed = tab === 'pending' ? pending : orders;
+  const tabRows = tab === 'pending' ? pending : orders;
+
+  const { search, onSearch } = useSearch(() => onPage(1));
+  const searchFiltered = tabRows.filter(o => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return o.order_number.toLowerCase().includes(q) ||
+      o.delivery_name.toLowerCase().includes(q) ||
+      (o.delivery_email ?? '').toLowerCase().includes(q);
+  });
+  const { page, totalPages, paged: displayed, onPage, total } = usePagination(searchFiltered);
 
   if (isLoading) return <p style={{ color: 'var(--muted)', padding: '24px 0' }}>Loading orders…</p>;
   if (isError) return <p className="auth-error"><span>Failed to load orders.</span></p>;
 
   return (
     <div className="page-stack">
-      <div className="stats-row">
+      <div className="admin-stats admin-stats-4">
         {[
           { label: 'Total orders', value: stats?.total_orders ?? orders.length, accent: 'pink' },
           { label: 'Pending verification', value: stats?.pending_verification ?? pending.length, accent: 'yellow' },
           { label: 'Revenue received', value: formatMoney(stats?.revenue_cents ?? 0), accent: 'teal' },
           { label: 'Low stock products', value: stats?.low_stock_products ?? 0, accent: 'orange' },
         ].map(s => (
-          <div key={s.label} className={`stat-card accent-${s.accent}`}>
-            <ShoppingBag size={18} />
-            <div><strong>{s.value}</strong><span>{s.label}</span></div>
+          <div key={s.label} className={`stat-card ${s.accent}`}>
+            <div className="stat-icon"><ShoppingBag size={16} /></div>
+            <strong>{s.value}</strong>
+            <span>{s.label}</span>
           </div>
         ))}
       </div>
 
-      <div className="page-toolbar">
-        {(['pending', 'all'] as const).map(t => (
-          <button key={t} className={`filter-btn${tab === t ? ' active' : ''}`} onClick={() => setTab(t)}>
-            {t === 'pending' ? `Pending verification (${pending.length})` : `All orders (${orders.length})`}
-          </button>
-        ))}
-      </div>
-
-      {displayed.length === 0 ? (
-        <div style={{ color: 'var(--muted)', padding: '32px 0', textAlign: 'center' }}>
-          {tab === 'pending' ? 'No orders pending verification.' : 'No orders yet.'}
-        </div>
-      ) : (
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Order</th><th>Source</th><th>Customer</th><th>Items</th>
-                <th>Total</th><th>Pay status</th><th>Order status</th><th>Date</th><th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {displayed.map(order => (
-                <tr key={order.id}>
-                  <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{order.order_number}</td>
-                  <td><SourceBadge source={order.source} /></td>
-                  <td>
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>{order.delivery_name}</div>
-                    <div style={{ fontSize: 12, color: 'var(--muted)' }}>{order.delivery_email}</div>
-                  </td>
-                  <td>{order.items.length}</td>
-                  <td>{formatMoney(order.total_cents)}</td>
-                  <td><PayStatusBadge status={order.payment_status} /></td>
-                  <td><OrderStatusBadge status={order.status} /></td>
-                  <td style={{ fontSize: 12, color: 'var(--muted)' }}>
-                    {new Date(order.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <button className="btn btn-sm btn-primary" onClick={() => setReviewing(order)}>Review</button>
-                      <button className="btn btn-sm" onClick={() => printReceipt(order, contactEmail)} title="Print receipt">
-                        <Printer size={13} />
-                      </button>
-                    </div>
-                  </td>
+      <div className="card table-card">
+        <TableControls search={search} onSearch={onSearch} page={page} totalPages={totalPages} total={total} onPage={onPage} placeholder="Search order, customer or email…">
+          <div className="table-filters" style={{ border: 'none', padding: 0 }}>
+            {(['pending', 'all'] as const).map(t => (
+              <button key={t} className={tab === t ? 'filter-active' : ''} onClick={() => { setTab(t); onSearch(''); }}>
+                {t === 'pending' ? `Pending (${pending.length})` : `All (${orders.length})`}
+              </button>
+            ))}
+          </div>
+        </TableControls>
+        {displayed.length === 0 ? (
+          <div style={{ color: 'var(--muted)', padding: '32px 0', textAlign: 'center' }}>
+            {tab === 'pending' ? 'No orders pending verification.' : 'No orders yet.'}
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Order</th><th>Source</th><th>Customer</th><th>Items</th>
+                  <th>Total</th><th>Pay status</th><th>Order status</th><th>Date</th><th>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody>
+                {displayed.map(order => (
+                  <tr key={order.id}>
+                    <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{order.order_number}</td>
+                    <td><SourceBadge source={order.source} /></td>
+                    <td>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>{order.delivery_name}</div>
+                      <div style={{ fontSize: 12, color: 'var(--muted)' }}>{order.delivery_email}</div>
+                    </td>
+                    <td>{order.items.length}</td>
+                    <td>{formatMoney(order.total_cents)}</td>
+                    <td><PayStatusBadge status={order.payment_status} /></td>
+                    <td><OrderStatusBadge status={order.status} /></td>
+                    <td style={{ fontSize: 12, color: 'var(--muted)' }}>
+                      {new Date(order.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button className="btn btn-sm btn-primary" onClick={() => setReviewing(order)}>Review</button>
+                        <button className="btn btn-sm" onClick={() => printReceipt(order, contactEmail)} title="Print receipt">
+                          <Printer size={13} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {reviewing && <ReviewModal order={reviewing} contactEmail={contactEmail} onClose={() => setReviewing(null)} />}
     </div>

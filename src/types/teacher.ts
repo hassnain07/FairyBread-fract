@@ -57,4 +57,5 @@ export type ClassSlotInput = {
   duration_minutes?: number;
   capacity?: number;
   price_cents?: number;
+  school_term_id?: string;
 };

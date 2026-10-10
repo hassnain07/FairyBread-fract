@@ -47,6 +47,7 @@ export function createBookingsMethods(sb: AppSupabase) {
       const { data, error } = await sb
         .from('class_bookings')
         .select(BOOKING_SELECT)
+        .eq('status', 'confirmed')
         .order('created_at', { ascending: false });
       if (error) throw toAppError(error);
       return (data ?? []).map(toBooking);

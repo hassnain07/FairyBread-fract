@@ -37,7 +37,7 @@ export function BookingsPage() {
       qc.invalidateQueries({ queryKey: ['gating', familyId] });
       qc.invalidateQueries({ queryKey: qk.sessions() });
       setCancellingId(null);
-      setCancelResult(result.credit_restored ? 'Booking cancelled — your credit has been returned.' : 'Booking cancelled.');
+      setCancelResult('Booking cancelled.');
       setCancelError('');
     },
     onError: (e) => setCancelError(toAppError(e).message),
@@ -116,7 +116,7 @@ export function BookingsPage() {
           <div className="policy-icon"><Clock3 size={19} /></div>
           <div>
             <span className="label">Cancellation policy</span>
-            <p>Cancel 24+ hours before your session to restore your class credit.</p>
+          <p>Cancel 24+ hours before your session to keep your spot available for others.</p>
           </div>
         </div>
       </div>
@@ -127,7 +127,7 @@ export function BookingsPage() {
             <button className="modal-close" onClick={() => setCancellingId(null)}><X size={18} /></button>
             <div className="modal-icon cancel"><Clock3 size={22} /></div>
             <h2>Cancel booking?</h2>
-            <p>If you cancel more than 24 hours before the session, your class credit will be returned.</p>
+            <p>If you cancel more than 24 hours before the session, your booking will be removed.</p>
             {cancelError && <p className="auth-error">{cancelError}</p>}
             <Button onClick={() => cancelBooking(cancellingId)} disabled={cancelling}>
               {cancelling ? 'Cancelling…' : 'Yes, cancel booking'}

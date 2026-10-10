@@ -10,7 +10,6 @@ import {
 } from 'react';
 import { dataClient } from '../lib/data/client';
 import { syncToken, disablePushForThisDevice } from '../lib/push/webPush';
-import { router } from './router';
 import type { AuthUser, Role } from '../types/auth';
 
 export const queryClient = new QueryClient({
@@ -132,7 +131,7 @@ function SwMessageHandler() {
     if (!navigator.serviceWorker) return;
     const handler = (e: MessageEvent) => {
       if (e.data?.type === 'NAVIGATE' && typeof e.data.url === 'string') {
-        void router.navigate(e.data.url);
+        window.location.href = e.data.url;
       }
     };
     navigator.serviceWorker.addEventListener('message', handler);

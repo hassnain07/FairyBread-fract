@@ -1,4 +1,5 @@
 import { ArrowRight, Sparkles, Star, Zap } from 'lucide-react';
+import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '../../../components/ui/Button';
@@ -12,7 +13,7 @@ const EMPTY_STARS = ['', '★★★★★', '★★★★', '★★★', '★★
 
 export function ReportsPage() {
   const { familyId } = useAuth();
-  const { childId } = useParams<{ childId?: string }>();
+  const { childId: paramChildId } = useParams<{ childId?: string }>();
 
   const { data: children = [] } = useQuery({
     queryKey: qk.children(familyId),
@@ -20,7 +21,9 @@ export function ReportsPage() {
     enabled: !!familyId,
   });
 
-  const child = (childId ? children.find(c => c.id === childId) : null) ?? children[0];
+  const initialIdx = paramChildId ? Math.max(0, children.findIndex(c => c.id === paramChildId)) : 0;
+  const [selectedIdx, setSelectedIdx] = useState(initialIdx);
+  const child = children[selectedIdx] ?? children[0];
 
   const { data: teachers = [] } = useQuery({
     queryKey: qk.teachers,
@@ -34,99 +37,108 @@ export function ReportsPage() {
   });
 
   const latest = childReports[childReports.length - 1] ?? null;
+  const stars = latest ? (STAR_LABELS[latest.overall] ?? '') : '';
+  const emptyStars = latest ? (EMPTY_STARS[latest.overall] ?? '') : '';
+  const tutorName = latest ? (teachers.find(t => t.id === latest.teacher_id)?.name ?? 'Your tutor') : '';
+  const tutorInitials = latest ? (teachers.find(t => t.id === latest.teacher_id)?.initials ?? 'T') : '';
+  const firstName = child?.givenName || child?.name.split(' ')[0] || 'Your child';
 
   if (isLoading) return <div className="page-stack"><p>Loading…</p></div>;
 
-  if (!latest) {
-    return (
-      <div className="page-stack">
+  return (
+    <div className="page-stack">
+      {children.length > 1 && (
+        <div className="child-switcher">
+          {children.map((c, i) => (
+            <button key={c.id} className={selectedIdx === i ? 'active' : ''} onClick={() => setSelectedIdx(i)}>
+              <span className="switcher-avatar">{c.initials}</span>
+              <span className="switcher-name">{c.givenName || c.name.split(' ')[0]}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!latest ? (
         <div className="report-hero">
           <SprinkleField count={12} />
           <div>
             <div className="eyebrow">Reports</div>
-            <h2>{child?.name.split(' ')[0] ?? 'Your child'}'s learning journey</h2>
+            <h2>{firstName}'s learning journey</h2>
             <p>No reports have been written yet. Reports will appear here after each term.</p>
           </div>
         </div>
-      </div>
-    );
-  }
-
-  const stars = STAR_LABELS[latest.overall] ?? '';
-  const emptyStars = EMPTY_STARS[latest.overall] ?? '';
-  const tutorName = teachers.find(t => t.id === latest.teacher_id)?.name ?? 'Your tutor';
-  const tutorInitials = teachers.find(t => t.id === latest.teacher_id)?.initials ?? 'T';
-
-  return (
-    <div className="page-stack">
-      <div className="report-hero">
-        <SprinkleField count={12} />
-        <div>
-          <div className="eyebrow">End of Term Report · {latest.term}</div>
-          <h2>{child?.name.split(' ')[0]}'s learning journey</h2>
-          <p>A thoughtful look at all the progress they've made.</p>
-        </div>
-        <div className="overall-score">
-          <strong>{latest.overall}.0</strong><span>Overall progress</span>
-          <div>{stars}<i>{emptyStars}</i></div>
-        </div>
-      </div>
-
-      <div className="report-grid">
-        <div className="card">
-          <div className="card-heading">
-            <div><span className="label">Learning snapshot</span><h3>Confidence is growing</h3></div>
-            <span className="trend"><Zap size={14} /> {latest.term}</span>
-          </div>
-          {latest.subjects.map(s => (
-            <div className="star-row" key={s.subject}>
-              <span>{s.subject}</span>
-              <b>{STAR_LABELS[s.rating]}<i>{EMPTY_STARS[s.rating]}</i></b>
+      ) : (
+        <>
+          <div className="report-hero">
+            <SprinkleField count={12} />
+            <div>
+              <div className="eyebrow">End of Term Report · {latest.term}</div>
+              <h2>{firstName}'s learning journey</h2>
+              <p>A thoughtful look at all the progress they've made.</p>
             </div>
-          ))}
-          {latest.subjects.length === 0 && (
-            <div className="star-row"><span>Overall</span><b>{stars}<i>{emptyStars}</i></b></div>
+            <div className="overall-score">
+              <strong>{latest.overall}.0</strong><span>Overall progress</span>
+              <div>{stars}<i>{emptyStars}</i></div>
+            </div>
+          </div>
+
+          <div className="report-grid">
+            <div className="card">
+              <div className="card-heading">
+                <div><span className="label">Learning snapshot</span><h3>Confidence is growing</h3></div>
+                <span className="trend"><Zap size={14} /> {latest.term}</span>
+              </div>
+              {latest.subjects.map(s => (
+                <div className="star-row" key={s.subject}>
+                  <span>{s.subject}</span>
+                  <b>{STAR_LABELS[s.rating]}<i>{EMPTY_STARS[s.rating]}</i></b>
+                </div>
+              ))}
+              {latest.subjects.length === 0 && (
+                <div className="star-row"><span>Overall</span><b>{stars}<i>{emptyStars}</i></b></div>
+              )}
+              <Button variant="soft" icon={ArrowRight}>View full report</Button>
+            </div>
+
+            <div className="card quote-card">
+              <Sparkles size={21} />
+              <span className="label">Tutor note</span>
+              <p>"{latest.note}"</p>
+              <div className="tutor-mini">
+                <div className="mini-avatar pink-bg">{tutorInitials}</div>
+                <small>{tutorName}<br /><b>{firstName}'s tutor</b></small>
+              </div>
+            </div>
+
+            {latest.strengths && (
+              <div className="card strength-card">
+                <div className="strength-icon"><Star size={18} /></div>
+                <span className="label">Strengths</span>
+                <p>{latest.strengths}</p>
+              </div>
+            )}
+
+            {latest.areas && (
+              <div className="card continue-card">
+                <div className="strength-icon orange-bg"><ArrowRight size={18} /></div>
+                <span className="label">Areas to continue</span>
+                <p>{latest.areas}</p>
+              </div>
+            )}
+          </div>
+
+          {childReports.length > 1 && (
+            <div className="card">
+              <div className="card-heading"><div><span className="label">Report history</span><h3>Previous terms</h3></div></div>
+              {childReports.slice(0, -1).reverse().map(r => (
+                <div className="star-row" key={r.id}>
+                  <span>{r.term}</span>
+                  <b>{STAR_LABELS[r.overall]}<i>{EMPTY_STARS[r.overall]}</i></b>
+                </div>
+              ))}
+            </div>
           )}
-          <Button variant="soft" icon={ArrowRight}>View full report</Button>
-        </div>
-
-        <div className="card quote-card">
-          <Sparkles size={21} />
-          <span className="label">Tutor note</span>
-          <p>"{latest.note}"</p>
-          <div className="tutor-mini">
-            <div className="mini-avatar pink-bg">{tutorInitials}</div>
-            <small>{tutorName}<br /><b>{child?.name.split(' ')[0]}'s tutor</b></small>
-          </div>
-        </div>
-
-        {latest.strengths && (
-          <div className="card strength-card">
-            <div className="strength-icon"><Star size={18} /></div>
-            <span className="label">Strengths</span>
-            <p>{latest.strengths}</p>
-          </div>
-        )}
-
-        {latest.areas && (
-          <div className="card continue-card">
-            <div className="strength-icon orange-bg"><ArrowRight size={18} /></div>
-            <span className="label">Areas to continue</span>
-            <p>{latest.areas}</p>
-          </div>
-        )}
-      </div>
-
-      {childReports.length > 1 && (
-        <div className="card">
-          <div className="card-heading"><div><span className="label">Report history</span><h3>Previous terms</h3></div></div>
-          {childReports.slice(0, -1).reverse().map(r => (
-            <div className="star-row" key={r.id}>
-              <span>{r.term}</span>
-              <b>{STAR_LABELS[r.overall]}<i>{EMPTY_STARS[r.overall]}</i></b>
-            </div>
-          ))}
-        </div>
+        </>
       )}
     </div>
   );

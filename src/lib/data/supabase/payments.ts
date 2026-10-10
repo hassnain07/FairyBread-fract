@@ -99,7 +99,7 @@ export function createPaymentsMethods(sb: AppSupabase) {
       if (!row?.proof_path) throw new Error('proof_missing');
       const { data, error: urlErr } = await sb.storage
         .from('payment-proofs')
-        .createSignedUrl(row.proof_path, 300);
+        .createSignedUrl(row.proof_path, 31536000);
       if (urlErr) throw toAppError(urlErr);
       return data.signedUrl;
     },

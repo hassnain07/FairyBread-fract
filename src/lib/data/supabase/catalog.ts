@@ -88,20 +88,46 @@ export function createCatalogMethods(sb: AppSupabase) {
       return (data ?? []).map(toClassSlot);
     },
 
-    async getUpcomingSessions(opts?: { from?: string; to?: string; classId?: string; teacherId?: string }): Promise<ClassSession[]> {
+    async getUpcomingSessions(opts?: { from?: string; to?: string; classId?: string; teacherId?: string; nextOnly?: boolean }): Promise<ClassSession[]> {
       const now = new Date().toISOString();
+
+      let classIds: string[] | null = null;
+      if (opts?.teacherId) {
+        const { data: classes, error: classErr } = await sb
+          .from('classes')
+          .select('id')
+          .eq('teacher_id', opts.teacherId);
+        if (classErr) throw toAppError(classErr);
+        classIds = (classes ?? []).map((c: any) => c.id);
+        if (classIds.length === 0) return [];
+      }
+
+      const fromDate = opts?.from ?? now;
+      const hasExplicitRange = !!(opts?.from || opts?.to);
+
       let q = sb
         .from('class_sessions')
-        .select('*, class:classes(teacher_id, program:programs(name,color), teacher:teachers(name,color))')
-        .eq('status', 'scheduled')
-        .gte('starts_at', opts?.from ?? now)
+        .select(`
+          id, class_id, starts_at, ends_at, capacity, booked_count, status,
+          class:classes(
+            teacher_id,
+            program:programs(name, color),
+            teacher:teachers(name, color)
+          )
+        `)
+        .gte('starts_at', fromDate)
         .order('starts_at');
+      if (!hasExplicitRange) q = q.eq('status', 'scheduled');
       if (opts?.to) q = q.lt('starts_at', opts.to);
       if (opts?.classId) q = q.eq('class_id', opts.classId);
-      if (opts?.teacherId) q = q.eq('class.teacher_id', opts.teacherId);
+      if (classIds) q = q.in('class_id', classIds);
+
       const { data, error } = await q;
       if (error) throw toAppError(error);
-      return (data ?? []).map(toClassSession);
+      const sessions = (data ?? []).map(toClassSession);
+      if (!opts?.nextOnly) return sessions;
+      const seen = new Set<string>();
+      return sessions.filter(s => { if (seen.has(s.class_id)) return false; seen.add(s.class_id); return true; });
     },
 
     async createClassSlot(input: ClassSlotInput): Promise<ClassSlot> {
@@ -114,6 +140,7 @@ export function createCatalogMethods(sb: AppSupabase) {
           start_time: input.start_time,
           duration_minutes: input.duration_minutes ?? 60,
           capacity: input.capacity,
+          ...(input.school_term_id ? { school_term_id: input.school_term_id } : {}),
         })
         .select('id')
         .single();
@@ -124,6 +151,8 @@ export function createCatalogMethods(sb: AppSupabase) {
           .upsert({ class_id: cls.id, price_cents: input.price_cents });
         if (rateErr) throw toAppError(rateErr);
       }
+      // Generate sessions immediately for this class within its term window
+      await sb.rpc('generate_sessions_for_class', { p_class_id: cls.id });
       const { data, error } = await sb.from('v_class_catalog').select('*').eq('id', cls.id).single();
       if (error) throw toAppError(error);
       return toClassSlot(data);

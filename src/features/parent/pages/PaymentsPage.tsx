@@ -199,7 +199,7 @@ function PurchasePanel({
         <>
           {intent.type === 'term' && (
             <>
-              <div className="invoice-line"><span>10-week term (10 class credits)</span><b>{formatMoney(quote.base_cents)}</b></div>
+              <div className="invoice-line"><span>10-week term</span><b>{formatMoney(quote.base_cents)}</b></div>
               {quote.registration_cents > 0 && <div className="invoice-line"><span>Registration fee</span><b>{formatMoney(quote.registration_cents)}</b></div>}
             </>
           )}
@@ -213,9 +213,9 @@ function PurchasePanel({
           <div className="invoice-line total"><span>Total due</span><b>{formatMoney(quote.total_cents)} AUD</b></div>
           <div className="bank-details-card" style={{ marginTop: 16 }}>
             <div className="bank-details-head"><CircleDollarSign size={18} /><span>Bank transfer details</span></div>
-            <div className="bank-detail-row"><span>Account name</span><b>{bank.account_name ?? 'Fairybread & Fractions Tutoring'}</b></div>
+            <div className="bank-detail-row"><span>Account name</span><b>{bank.account_name ?? '—'}</b></div>
             <div className="bank-detail-row"><span>BSB</span><b>{bank.bsb ?? '—'}</b></div>
-            <div className="bank-detail-row"><span>Account number</span><b>{bank.account_number ?? '—'}</b></div>
+            <div className="bank-detail-row"><span>Account number</span><b>{bank.account ?? '—'}</b></div>
             <div className="bank-detail-row"><span>Reference</span><b>{reference}</b></div>
           </div>
           <div className="invoice-actions">
@@ -314,8 +314,7 @@ export function PaymentsPage() {
           <div style={{ flex: 1 }}>
             <strong style={{ fontSize: 13, display: 'block' }}>Active term</strong>
             <span style={{ fontSize: 11, color: 'var(--muted)' }}>
-              {activeTerm.classes_remaining} of {activeTerm.classes_included} credits remaining ·
-              ends {new Date(activeTerm.end_date).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
+              {activeTerm.term_label ?? 'Active term'} · ends {new Date(activeTerm.end_date).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
             </span>
           </div>
           <Button variant="soft" onClick={() => navigate('/parent/book-class')} icon={ArrowRight}>Book a class</Button>

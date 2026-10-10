@@ -7,7 +7,6 @@ import { qk } from '../../../lib/data/queryKeys';
 import { toAppError } from '../../../lib/data/errors';
 
 const COLOURS = ['pink', 'yellow', 'teal', 'orange', 'green', 'magenta'];
-const SUBJECT_OPTIONS = ['Mathematics', 'English', 'Reading & Spelling', 'Maths & English', 'Science'];
 
 type InviteForm = {
   email: string;
@@ -31,6 +30,11 @@ export function AdminTutorsPage() {
     queryFn: () => dataClient.getTeachers(),
   });
 
+  const { data: programs = [] } = useQuery({
+    queryKey: qk.programs,
+    queryFn: () => dataClient.getPrograms(),
+  });
+
   const { data: classSlots = [] } = useQuery({
     queryKey: qk.classSlots,
     queryFn: () => dataClient.getClassSlots(),
@@ -44,9 +48,12 @@ export function AdminTutorsPage() {
       subjects: f.subjects,
       color: f.color,
     }),
-    onSuccess: () => {
+    onSuccess: (result: any) => {
       qc.invalidateQueries({ queryKey: qk.teachers });
-      setInviteSuccess(`Invite sent to ${form.email}. They will receive an email to set their password.`);
+      const msg = result?.invited === false
+        ? `${form.email} already has an account — they've been added as a teacher.`
+        : `Invite sent to ${form.email}. They will receive an email to set their password.`;
+      setInviteSuccess(msg);
       setForm(EMPTY_FORM);
       setFormError('');
     },
@@ -162,15 +169,18 @@ export function AdminTutorsPage() {
                   <div>
                     <span className="label" style={{ display: 'block', marginBottom: 6 }}>Subjects</span>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                      {SUBJECT_OPTIONS.map(s => (
+                      {programs.length === 0 && (
+                        <p style={{ fontSize: 12, color: 'var(--muted)', margin: 0 }}>No programs yet — add programs first.</p>
+                      )}
+                      {programs.map(p => (
                         <button
-                          key={s}
+                          key={p.id}
                           type="button"
-                          onClick={() => toggleSubject(s)}
-                          className={`tutor-subject-tag ${form.subjects.includes(s) ? form.color : ''}`}
-                          style={{ cursor: 'pointer', opacity: form.subjects.includes(s) ? 1 : 0.45 }}
+                          onClick={() => toggleSubject(p.name)}
+                          className={`tutor-subject-tag ${form.subjects.includes(p.name) ? form.color : ''}`}
+                          style={{ cursor: 'pointer', opacity: form.subjects.includes(p.name) ? 1 : 0.45 }}
                         >
-                          {s}
+                          {p.name}
                         </button>
                       ))}
                     </div>

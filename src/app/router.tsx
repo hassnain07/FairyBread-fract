@@ -23,6 +23,7 @@ import { PaymentsPage } from '../features/parent/pages/PaymentsPage';
 import { EnrolmentPage } from '../features/parent/pages/EnrolmentPage';
 import { LearningShopPage } from '../features/parent/pages/LearningShopPage';
 import { MyOrdersPage } from '../features/parent/pages/MyOrdersPage';
+import { AssessmentsPage } from '../features/parent/pages/AssessmentsPage';
 
 // Admin pages
 import { AdminHomePage } from '../features/admin/pages/AdminHomePage';
@@ -38,6 +39,7 @@ import { AdminTimetablePage } from '../features/admin/pages/AdminTimetablePage';
 import { AdminMessagesPage } from '../features/admin/pages/AdminMessagesPage';
 import { AdminOrdersPage } from '../features/admin/pages/AdminOrdersPage';
 import { AdminShopProductsPage } from '../features/admin/pages/AdminShopProductsPage';
+import { AdminAssessmentsPage } from '../features/admin/pages/AdminAssessmentsPage';
 
 // Teacher pages
 import { TeacherDashboardPage } from '../features/teacher/pages/TeacherDashboardPage';
@@ -48,7 +50,7 @@ import { TeacherAssessmentsPage } from '../features/teacher/pages/TeacherAssessm
 import { TeacherMessagesPage } from '../features/teacher/pages/TeacherMessagesPage';
 import { TeacherReportsPage } from '../features/teacher/pages/TeacherReportsPage';
 
-export const router = createBrowserRouter([
+const router = createBrowserRouter([
   { path: '/', element: <LandingPage /> },
   { path: '/login', element: <LoginPage /> },
   { path: '/signup', element: <SignupPage /> },
@@ -74,6 +76,7 @@ export const router = createBrowserRouter([
       { path: 'enrol', element: <EnrolmentPage /> },
       { path: 'shop', element: <LearningShopPage /> },
       { path: 'orders', element: <MyOrdersPage /> },
+      { path: 'assessments', element: <AssessmentsPage /> },
     ],
   }]},
   {
@@ -95,6 +98,7 @@ export const router = createBrowserRouter([
       { path: 'my-teaching', element: <AdminMyTeachingPage /> },
       { path: 'orders', element: <AdminOrdersPage /> },
       { path: 'shop-products', element: <AdminShopProductsPage /> },
+      { path: 'assessments', element: <AdminAssessmentsPage /> },
     ],
   }]},
   {

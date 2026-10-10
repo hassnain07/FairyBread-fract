@@ -12,9 +12,10 @@ export function createAdminMethods(sb: AppSupabase) {
       return raw;
     },
 
-    async inviteStaff(input: { email: string; fullName: string; role: 'teacher' | 'admin'; subjects?: string[]; color?: string }): Promise<void> {
-      const { error } = await sb.functions.invoke('admin-invite-user', { body: input });
+    async inviteStaff(input: { email: string; fullName: string; role: 'teacher' | 'admin'; subjects?: string[]; color?: string }): Promise<{ invited: boolean }> {
+      const { data, error } = await sb.functions.invoke('admin-invite-user', { body: input });
       if (error) throw toAppError(error);
+      return data as { invited: boolean };
     },
 
     async getWaitingList(): Promise<ClassBooking[]> {

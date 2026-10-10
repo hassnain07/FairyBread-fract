@@ -7,7 +7,7 @@ import { qk } from '../../../lib/data/queryKeys';
 
 function Stat({ label, value, accent, icon: Icon }: { label: string; value: string; accent: string; icon: React.ElementType }) {
   return (
-    <div className={`stat-card accent-${accent}`}>
+    <div className={`stat-card ${accent}`}>
       <div className="stat-icon"><Icon size={19} /></div>
       <strong>{value}</strong><span>{label}</span><div className="stat-line" />
     </div>

@@ -20,7 +20,6 @@ export function useTermStatus(familyId: string) {
   const weeksRemaining = activeTerm ? termWeeksRemaining(activeTerm) : 0;
   const expiringSoon = activeTerm ? isTermExpiringSoon(activeTerm) : false;
 
-  // Use server gating state when available, fall back to client-side computation
   const gatingState = gating?.state ?? (terms.length === 0 ? 'NO_TERM_EVER' : activeTerm ? 'ACTIVE_TERM' : 'TERM_EXPIRED');
 
   return {
@@ -30,6 +29,5 @@ export function useTermStatus(familyId: string) {
     weeksRemaining,
     expiringSoon,
     isLoading: loadingTerms || loadingGating,
-    classesRemaining: gating?.classes_remaining ?? activeTerm?.classes_remaining ?? 0,
   };
 }

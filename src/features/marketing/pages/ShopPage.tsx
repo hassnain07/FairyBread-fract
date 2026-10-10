@@ -346,7 +346,8 @@ export function PublicShopPage() {
       <main>
         <div className="public-shop-hero">
           <div className="public-shop-hero-text">
-            <h1>Learning Shop</h1>
+            <div className="eyebrow"><ShoppingBag size={13} /> Learning Shop</div>
+            <h1>Resources to help kids <em>thrive</em></h1>
             <p>Workbooks, flash cards and activity kits to support learning at home. No account needed.</p>
           </div>
         </div>

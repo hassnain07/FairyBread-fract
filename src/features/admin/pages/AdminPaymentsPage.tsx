@@ -1,7 +1,9 @@
-import { Check, CircleDollarSign, Clock3, ExternalLink, X } from 'lucide-react';
+import { Check, CircleDollarSign, Clock3, ExternalLink, Search, X } from 'lucide-react';
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '../../../components/ui/Button';
+import { TableControls } from '../../../components/ui/TableControls';
+import { usePagination, useSearch } from '../../../hooks/usePagination';
 import { dataClient } from '../../../lib/data/client';
 import { qk } from '../../../lib/data/queryKeys';
 import { formatMoney } from '../../../lib/utils/money';
@@ -30,6 +32,7 @@ export function AdminPaymentsPage() {
   const [actionError, setActionError] = useState('');
   const [proofUrl, setProofUrl] = useState<string | null>(null);
   const [loadingProof, setLoadingProof] = useState(false);
+  const [proofError, setProofError] = useState(false);
 
   const { data: allPayments = [], isLoading } = useQuery({
     queryKey: qk.allPayments,
@@ -37,7 +40,15 @@ export function AdminPaymentsPage() {
   });
 
   const pendingPayments = allPayments.filter(p => p.status === 'pending');
-  const displayRows = activeTab === 'pending' ? pendingPayments : allPayments;
+  const tabRows = activeTab === 'pending' ? pendingPayments : allPayments;
+
+  const { search, onSearch } = useSearch(() => onPage(1));
+  const searchFiltered = tabRows.filter(p => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (p.family_name ?? '').toLowerCase().includes(q) || p.reference.toLowerCase().includes(q);
+  });
+  const { page, totalPages, paged: displayRows, onPage, total } = usePagination(searchFiltered);
 
   const paidTotal = allPayments.filter(p => p.status === 'paid').reduce((s, p) => s + p.total_cents, 0);
   const pendingTotal = allPayments.filter(p => p.status === 'pending').reduce((s, p) => s + p.total_cents, 0);
@@ -63,16 +74,15 @@ export function AdminPaymentsPage() {
     setRejectNote('');
     setActionError('');
     setProofUrl(null);
-    if (p.proof_filename) {
-      setLoadingProof(true);
-      try {
-        const url = await dataClient.getProofUrl!(p.id);
-        setProofUrl(url);
-      } catch {
-        setProofUrl(null);
-      } finally {
-        setLoadingProof(false);
-      }
+    setProofError(false);
+    setLoadingProof(true);
+    try {
+      const url = await dataClient.getProofUrl!(p.id);
+      setProofUrl(url);
+    } catch {
+      setProofError(true);
+    } finally {
+      setLoadingProof(false);
     }
   }
 
@@ -106,14 +116,16 @@ export function AdminPaymentsPage() {
           </div>
         </div>
 
-        <div className="table-filters">
-          <button className={activeTab === 'pending' ? 'filter-active' : ''} onClick={() => setActiveTab('pending')}>
-            Pending review <span>{pendingPayments.length}</span>
-          </button>
-          <button className={activeTab === 'all' ? 'filter-active' : ''} onClick={() => setActiveTab('all')}>
-            All payments <span>{allPayments.length}</span>
-          </button>
-        </div>
+        <TableControls search={search} onSearch={onSearch} page={page} totalPages={totalPages} total={total} onPage={onPage} placeholder="Search by family or reference…">
+          <div className="table-filters" style={{ border: 'none', padding: 0 }}>
+            <button className={activeTab === 'pending' ? 'filter-active' : ''} onClick={() => { setActiveTab('pending'); onSearch(''); }}>
+              Pending review <span>{pendingPayments.length}</span>
+            </button>
+            <button className={activeTab === 'all' ? 'filter-active' : ''} onClick={() => { setActiveTab('all'); onSearch(''); }}>
+              All payments <span>{allPayments.length}</span>
+            </button>
+          </div>
+        </TableControls>
 
         <div className="table-wrap">
           <table>
@@ -157,9 +169,9 @@ export function AdminPaymentsPage() {
       </div>
 
       {reviewing && (
-        <div className="modal-backdrop" onClick={() => { setReviewing(null); setProofUrl(null); }}>
+        <div className="modal-backdrop" onClick={() => { setReviewing(null); setProofUrl(null); setProofError(false); }}>
           <div className="modal payment-review-modal" onClick={e => e.stopPropagation()}>
-            <button className="modal-close" onClick={() => { setReviewing(null); setProofUrl(null); }}><X size={18} /></button>
+            <button className="modal-close" onClick={() => { setReviewing(null); setProofUrl(null); setProofError(false); }}><X size={18} /></button>
             <div className="modal-icon payment"><CircleDollarSign size={22} /></div>
             <h2>Verify payment</h2>
             <p>Review the submitted proof and approve or reject this payment.</p>
@@ -170,9 +182,12 @@ export function AdminPaymentsPage() {
               ) : proofUrl ? (
                 <div className="receipt-placeholder receipt-has-file">
                   <a href={proofUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--teal)', fontWeight: 600, fontSize: 13 }}>
-                    <ExternalLink size={16} /> View proof — {reviewing.proof_filename}
+                    <ExternalLink size={16} /> View proof — {reviewing.proof_filename ?? 'receipt'}
                   </a>
-                  <small>Opens in a new tab · link expires in 5 minutes</small>
+                </div>
+              ) : proofError ? (
+                <div className="receipt-placeholder">
+                  <p style={{ color: 'var(--orange)', fontSize: 13 }}>Could not load proof — it may have been deleted from storage.</p>
                 </div>
               ) : (
                 <div className="receipt-placeholder">

@@ -1,25 +1,12 @@
-import { ArrowRight, Bell, MoreHorizontal, Plus } from 'lucide-react';
+import { Bell, MessageCircle, Send } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Button } from '../../../components/ui/Button';
 import { dataClient } from '../../../lib/data/client';
 import { qk } from '../../../lib/data/queryKeys';
 import { useAuth } from '../../../app/providers';
 import { toAppError } from '../../../lib/data/errors';
+import { inboxTime, bubbleTime, dayDivider, dayKey } from '../../../lib/utils/chatTime';
 import type { Conversation } from '../../../types/message';
-
-function timeLabel(iso: string) {
-  const diff = Date.now() - new Date(iso).getTime();
-  const m = Math.floor(diff / 60_000);
-  if (m < 1) return 'Just now';
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  if (h < 48) return 'Yesterday';
-  const d = Math.floor(h / 24);
-  if (d < 7) return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(iso).getDay()];
-  return new Date(iso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
-}
 
 export function MessagesPage() {
   const { familyId } = useAuth();
@@ -29,17 +16,36 @@ export function MessagesPage() {
   const [error, setError] = useState('');
   const bodyRef = useRef<HTMLDivElement>(null);
 
-  // Auto-create support thread on first visit
+  // Fetch confirmed bookings to find which teachers this family's children are enrolled with
+  const { data: bookings = [], isSuccess: bookingsLoaded } = useQuery({
+    queryKey: qk.bookings(familyId),
+    queryFn: () => dataClient.getBookings(familyId),
+    enabled: !!familyId,
+  });
+
+  // Auto-create conversations: one with admin (parent_staff) + one per unique teacher
   useEffect(() => {
-    if (!familyId) return;
-    dataClient.startConversation!('parent_staff', { familyId })
+    if (!familyId || !bookingsLoaded) return;
+
+    dataClient.startConversation('parent_staff', { familyId })
       .then(() => qc.invalidateQueries({ queryKey: qk.conversations }))
       .catch(() => {});
-  }, [familyId, qc]);
+
+    const teacherIds = [...new Set(
+      bookings
+        .filter(b => b.status === 'confirmed' && b.session?.teacher_id)
+        .map(b => b.session!.teacher_id)
+    )];
+    teacherIds.forEach(teacherId => {
+      dataClient.startConversation('parent_teacher', { familyId, teacherId })
+        .then(() => qc.invalidateQueries({ queryKey: qk.conversations }))
+        .catch(() => {});
+    });
+  }, [familyId, bookingsLoaded, bookings, qc]);
 
   const { data: conversations = [] } = useQuery({
     queryKey: qk.conversations,
-    queryFn: () => dataClient.getConversations!(),
+    queryFn: () => dataClient.getConversations(),
     enabled: !!familyId,
   });
 
@@ -48,13 +54,13 @@ export function MessagesPage() {
 
   const { data: messages = [] } = useQuery({
     queryKey: qk.messages(convId ?? ''),
-    queryFn: () => convId ? dataClient.getMessages!(convId) : Promise.resolve([]),
+    queryFn: () => convId ? dataClient.getMessages(convId) : Promise.resolve([]),
     enabled: !!convId,
   });
 
   useEffect(() => {
     if (convId) {
-      dataClient.markConversationRead!(convId).then(() =>
+      dataClient.markConversationRead(convId).then(() =>
         qc.invalidateQueries({ queryKey: qk.conversations })
       );
     }
@@ -65,7 +71,7 @@ export function MessagesPage() {
   }, [messages.length]);
 
   const send = useMutation({
-    mutationFn: () => dataClient.sendMessage!(convId!, draft.trim()),
+    mutationFn: () => dataClient.sendMessage(convId!, draft.trim()),
     onSuccess: () => {
       setDraft('');
       setError('');
@@ -80,18 +86,19 @@ export function MessagesPage() {
     send.mutate();
   }
 
-  const otherInitials = activeConv?.title.split(' ').map(x => x[0]).join('').slice(0, 2) ?? '';
-
   return (
-    <div className="page-stack messages-layout">
+    <div className={`page-stack messages-layout${activeConvId ? ' chat-open' : ''}`}>
+      {/* ── Inbox sidebar ── */}
       <div className="card conversation-list">
         <div className="card-heading">
           <div><span className="label">Inbox</span><h3>Messages</h3></div>
-          <Button variant="soft" icon={Plus} onClick={() => familyId && dataClient.startConversation!('parent_staff', { familyId }).then(() => qc.invalidateQueries({ queryKey: qk.conversations }))}>New</Button>
         </div>
         <div className="conversation-scroll">
+          {conversations.length === 0 && (
+            <p style={{ fontSize: 12, color: 'var(--muted)', padding: '12px 8px' }}>No conversations yet.</p>
+          )}
           {conversations.map(conv => {
-            const initials = conv.title.split(' ').map(x => x[0]).join('').slice(0, 2);
+            const initials = conv.title.split(' ').map(x => x[0]).join('').slice(0, 2).toUpperCase();
             return (
               <button
                 key={conv.id}
@@ -99,63 +106,80 @@ export function MessagesPage() {
                 onClick={() => setActiveConvId(conv.id)}
               >
                 <div className={`mini-avatar ${conv.avatar_color}-bg`}>{initials}</div>
-                <div>
-                  <strong>{conv.title}</strong>
-                  <span>{conv.last_message}</span>
+                <div className="conv-body">
+                  <div className="conv-top-row">
+                    <strong className="conv-name">{conv.title}</strong>
+                    <small className="conv-time">{inboxTime(conv.last_message_at)}</small>
+                  </div>
+                  <span className="conv-preview">{conv.last_message}</span>
                   {conv.unread_count > 0 && (
                     <span className="reminder-pill"><Bell size={11} />{conv.unread_count} new</span>
                   )}
                 </div>
-                <small>{timeLabel(conv.last_message_at)}</small>
               </button>
             );
           })}
         </div>
       </div>
 
+      {/* ── Chat window ── */}
       <div className="card chat-window">
         {activeConv ? (
           <>
             <div className="chat-head">
-              <div className={`mini-avatar ${activeConv.avatar_color}-bg`}>{otherInitials}</div>
+              <div className={`mini-avatar ${activeConv.avatar_color}-bg`} style={{ width: 38, height: 38, fontSize: 13 }}>
+                {activeConv.title.split(' ').map(x => x[0]).join('').slice(0, 2).toUpperCase()}
+              </div>
               <div>
                 <strong>{activeConv.title}</strong>
                 <span>Typically replies within a day</span>
               </div>
-              <MoreHorizontal size={18} />
+              <button className="btn-ghost chat-back-btn" onClick={() => setActiveConvId(null)} title="Back" style={{ marginLeft: 'auto' }}>
+                ✕
+              </button>
             </div>
+
             <div className="chat-body" ref={bodyRef}>
-              {messages.map(msg => {
+              {messages.map((msg, i) => {
                 const isMine = msg.sender_role === 'parent';
+                const showDivider = i === 0 || dayKey(msg.created_at) !== dayKey(messages[i - 1].created_at);
                 return (
                   <div key={msg.id}>
-                    {msg.is_reminder && (
-                      <div className="chat-reminder-label"><Bell size={12} />Reminder</div>
+                    {showDivider && (
+                      <div className="chat-day-divider"><span>{dayDivider(msg.created_at)}</span></div>
                     )}
-                    <div className={`chat-bubble ${isMine ? 'sent' : 'received'}`}>
-                      {msg.body}
-                      <small>{timeLabel(msg.created_at)}</small>
+                    <div className={`chat-msg-wrap ${isMine ? 'sent' : 'received'}`}>
+                      {msg.is_reminder && (
+                        <div className="chat-reminder-label"><Bell size={12} />Reminder</div>
+                      )}
+                      {!isMine && <div className="chat-sender-name">{msg.sender_name}</div>}
+                      <div className={`chat-bubble ${isMine ? 'sent' : 'received'}`}>
+                        <span className="bubble-body">{msg.body}</span>
+                        <small className="bubble-time">{bubbleTime(msg.created_at)}</small>
+                      </div>
                     </div>
                   </div>
                 );
               })}
             </div>
-            {error && <p className="auth-error" style={{ margin: '0 12px' }}>{error}</p>}
+
+            {error && <p className="auth-error" style={{ margin: '0 16px 8px' }}>{error}</p>}
+
             <div className="chat-input">
               <input
-                placeholder="Write a message..."
+                placeholder="Write a message…"
                 value={draft}
                 onChange={e => setDraft(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
               />
-              <button onClick={handleSend} disabled={!draft.trim() || send.isPending}>
-                <ArrowRight size={17} />
+              <button onClick={handleSend} disabled={!draft.trim() || send.isPending} title="Send">
+                <Send size={15} />
               </button>
             </div>
           </>
         ) : (
           <div className="chat-empty">
-            <Bell size={32} />
+            <MessageCircle size={36} />
             <p>Select a conversation to start messaging.</p>
           </div>
         )}

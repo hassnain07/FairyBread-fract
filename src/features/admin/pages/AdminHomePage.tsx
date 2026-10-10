@@ -1,12 +1,13 @@
-import { ArrowRight, BarChart3, Bell, CalendarDays, ChevronRight, CircleDollarSign, ClipboardList, FileText, GraduationCap, Sparkles } from 'lucide-react';
+import { ArrowRight, Bell, CalendarDays, ChevronRight, CircleDollarSign, ClipboardList, FileText, GraduationCap, Sparkles, TrendingUp } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { dataClient } from '../../../lib/data/client';
 import { qk } from '../../../lib/data/queryKeys';
+import { formatMoney } from '../../../lib/utils/money';
 
 function Stat({ label, value, accent, icon: Icon }: { label: string; value: string | number; accent: string; icon: React.ElementType }) {
   return (
-    <div className={`stat-card accent-${accent}`}>
+    <div className={`stat-card ${accent}`}>
       <div className="stat-icon"><Icon size={19} /></div>
       <strong>{value}</strong><span>{label}</span><div className="stat-line" />
     </div>
@@ -40,19 +41,32 @@ export function AdminHomePage() {
         <Stat label="Classes today" value={stats?.classes_today ?? '—'} accent="teal" icon={CalendarDays} />
         <Stat label="Pending payments" value={stats?.pending_payments ?? '—'} accent="orange" icon={CircleDollarSign} />
         <Stat label="Reports due" value={stats?.reports_due ?? '—'} accent="green" icon={FileText} />
+        <Stat label="Revenue this month" value={stats ? formatMoney(stats.revenue_this_month_cents) : '—'} accent="magenta" icon={TrendingUp} />
       </div>
       <div className="admin-grid">
         <div className="card admin-chart">
           <div className="card-heading">
-            <div><span className="label">Term at a glance</span><h3>Learning momentum</h3></div>
-            <button className="select-btn">This term <ChevronRight size={14} /></button>
+            <div><span className="label">Term at a glance</span><h3>Attendance rate</h3></div>
+            <button className="select-btn">Last 12 weeks <ChevronRight size={14} /></button>
           </div>
           <div className="chart">
             <div className="chart-y"><span>100%</span><span>75%</span><span>50%</span><span>25%</span><span>0%</span></div>
             <div className="chart-area">
               <div className="chart-line" />
-              <div className="chart-bars">{[50,62,55,72,64,80,75,88,78,94,84,90].map((h, i) => <i key={i} style={{ height: `${h}%` }} />)}</div>
-              <div className="chart-x">{['W1','W2','W3','W4','W5','W6','W7','W8','W9','W10','W11','W12'].map(x => <span key={x}>{x}</span>)}</div>
+              {(() => {
+                const weeks = stats?.weekly_attendance ?? [];
+                const bars = weeks.length > 0 ? weeks : Array.from({ length: 12 }, (_, i) => ({ week: `W${i + 1}`, rate: 0 }));
+                const labels = bars.map(w => {
+                  const d = new Date(w.week);
+                  return isNaN(d.getTime()) ? w.week : `W${Math.ceil((d.getDate()) / 7)}`;
+                });
+                return (
+                  <>
+                    <div className="chart-bars">{bars.map((w, i) => <i key={i} style={{ height: `${w.rate}%` }} />)}</div>
+                    <div className="chart-x">{labels.map((x, i) => <span key={i}>{x}</span>)}</div>
+                  </>
+                );
+              })()}
             </div>
           </div>
         </div>

@@ -1,7 +1,7 @@
 import type { AppSupabase } from '../../supabase';
 import { toAppError } from '../errors';
 import { rpc } from './rpc';
-import type { Term, GatingSnapshot } from '../../../types/term';
+import type { Term, SchoolTerm, GatingSnapshot } from '../../../types/term';
 
 function toTerm(r: any): Term {
   return {
@@ -11,9 +11,17 @@ function toTerm(r: any): Term {
     term_label: r.term_label ?? undefined,
     start_date: r.start_date,
     end_date: r.end_date,
-    classes_included: r.classes_included ?? 0,
-    classes_booked: r.classes_booked ?? 0,
-    classes_remaining: r.classes_remaining ?? 0,
+  };
+}
+
+function toSchoolTerm(r: any): SchoolTerm {
+  return {
+    id: r.id,
+    label: r.label,
+    start_date: r.start_date,
+    end_date: r.end_date,
+    is_active: r.is_active ?? true,
+    created_at: r.created_at,
   };
 }
 
@@ -22,7 +30,7 @@ export function createTermsMethods(sb: AppSupabase) {
     async getTerms(familyId: string): Promise<Term[]> {
       const { data, error } = await sb
         .from('terms')
-        .select('*')
+        .select('id,family_id,status,term_label,start_date,end_date')
         .eq('family_id', familyId)
         .order('start_date');
       if (error) throw toAppError(error);
@@ -30,9 +38,30 @@ export function createTermsMethods(sb: AppSupabase) {
     },
 
     async getAllTerms(): Promise<Term[]> {
-      const { data, error } = await sb.from('terms').select('*').order('start_date');
+      const { data, error } = await sb
+        .from('terms')
+        .select('id,family_id,status,term_label,start_date,end_date')
+        .order('start_date');
       if (error) throw toAppError(error);
       return (data ?? []).map(toTerm);
+    },
+
+    async getSchoolTerms(): Promise<SchoolTerm[]> {
+      const { data, error } = await sb
+        .from('school_terms')
+        .select('*')
+        .order('start_date', { ascending: false });
+      if (error) throw toAppError(error);
+      return (data ?? []).map(toSchoolTerm);
+    },
+
+    async createSchoolTerm(label: string, startDate: string, endDate: string): Promise<SchoolTerm> {
+      const raw = await rpc<any>(sb, 'admin_create_school_term', {
+        p_label: label,
+        p_start_date: startDate,
+        p_end_date: endDate,
+      });
+      return toSchoolTerm(raw);
     },
 
     async adminAdjustCredits(termId: string, delta: number, note: string): Promise<Term> {

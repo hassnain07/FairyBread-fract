@@ -90,20 +90,13 @@ export function DashboardPage() {
             <div><span className="label">{child.name} · {child.year}</span><h3>{firstName} is doing great!</h3></div>
             <div className="round-check"><Check size={17} /></div>
           </div>
-          {activeTerm && (
-            <div className="credit-inline-summary">
-              <span className="credit-inline-used">{activeTerm.classes_included - activeTerm.classes_remaining} credits used</span>
-              <span className="credit-inline-sep">·</span>
-              <span className="credit-inline-remaining">{activeTerm.classes_remaining} remaining</span>
-            </div>
-          )}
           {termBookings > 0 ? (
             <div className="big-progress">
               <div className="ring"><strong>{termBookings}</strong></div>
               <div>
                 <strong>Sessions this term</strong>
                 <small>{termBookings} class{termBookings !== 1 ? 'es' : ''} booked</small>
-                <Progress value={Math.min(100, (termBookings / (activeTerm?.classes_included ?? 10)) * 100)} color="pink" />
+                <Progress value={Math.min(100, (termBookings / 10) * 100)} color="pink" />
                 <a onClick={() => navigate('/parent/bookings')}>View bookings <ArrowRight size={14} /></a>
               </div>
             </div>

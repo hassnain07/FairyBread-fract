@@ -1,4 +1,4 @@
-import { ArrowRight, Check, CircleDollarSign, CreditCard, Ticket, Users, X } from 'lucide-react';
+import { ArrowRight, Check, CircleDollarSign, Users, X } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -17,7 +17,7 @@ export function BookClassPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { familyId } = useAuth();
-  const { gatingState, canBookRegularClass, canBookIndividualClass, classesRemaining, activeTerm, isLoading } = useBookingEligibility(familyId);
+  const { gatingState, activeTerm, isLoading } = useBookingEligibility(familyId);
 
   const { data: children = [] } = useQuery({
     queryKey: qk.children(familyId),
@@ -26,41 +26,50 @@ export function BookClassPage() {
   });
   const enrolledChildren = children.filter(c => c.enrolled);
 
+  const weekTo = new Date(Date.now() + 7 * 86400_000).toISOString().slice(0, 10);
+
   const { data: sessions = [], isLoading: loadingSessions } = useQuery({
-    queryKey: qk.sessions(),
-    queryFn: () => dataClient.getUpcomingSessions(),
+    queryKey: qk.sessions({ to: weekTo }),
+    queryFn: () => dataClient.getUpcomingSessions({ to: weekTo, from: new Date().toISOString() }),
     enabled: !isLoading,
+  });
+
+  const { data: bookings = [] } = useQuery({
+    queryKey: qk.bookings(familyId),
+    queryFn: () => dataClient.getBookings(familyId),
+    enabled: !!familyId,
   });
 
   const [selectedChildIdx, setSelectedChildIdx] = useState(0);
   const selectedChild = enrolledChildren[selectedChildIdx];
-  const [bookingMode, setBookingMode] = useState<'term' | 'individual'>('term');
   const [confirming, setConfirming] = useState<ClassSession | null>(null);
   const [bookError, setBookError] = useState('');
-  const [bookedSessionId, setBookedSessionId] = useState<string | null>(null);
+
+  const hasTerm = gatingState === 'ACTIVE_TERM';
 
   const bookMutation = useMutation({
-    mutationFn: (sessionId: string) => dataClient.bookClassSession(selectedChild!.id, sessionId),
-    onSuccess: (_, sessionId) => {
+    mutationFn: (session: ClassSession) => dataClient.bookClassSession(selectedChild!.id, session.id),
+    onSuccess: (_, session) => {
       qc.invalidateQueries({ queryKey: qk.bookings(familyId) });
-      qc.invalidateQueries({ queryKey: qk.terms(familyId) });
-      qc.invalidateQueries({ queryKey: ['gating', familyId] });
       qc.invalidateQueries({ queryKey: qk.sessions() });
-      setBookedSessionId(sessionId);
+      qc.invalidateQueries({ queryKey: qk.terms(familyId) });
       setConfirming(null);
       setBookError('');
+      if (session.teacher_id && familyId) {
+        dataClient.startConversation('parent_teacher', { familyId, teacherId: session.teacher_id })
+          .then(() => qc.invalidateQueries({ queryKey: qk.conversations }))
+          .catch(() => {});
+      }
     },
     onError: (e) => setBookError(toAppError(e).message),
   });
 
   if (isLoading) return <div className="page-stack"><p>Loading…</p></div>;
 
-  const usingCredit = bookingMode === 'term' && canBookRegularClass;
-
   if (enrolledChildren.length === 0) {
     return (
       <div className="page-stack">
-        <div className="page-toolbar"><div><h2>Book a class</h2><p>Choose a session for your child this week.</p></div></div>
+        <div className="page-toolbar"><div><h2>Book a class</h2><p>Choose a session for your child.</p></div></div>
         <div className="enrol-gate-banner">
           <div className="enrol-gate-icon">🎒</div>
           <div>
@@ -78,87 +87,52 @@ export function BookClassPage() {
 
   const childFirstName = selectedChild?.givenName || selectedChild?.name.split(' ')[0] || 'your child';
 
+  // Sessions already booked for the selected child
+  const bookedSessionIds = new Set(
+    bookings
+      .filter(b => b.child_id === selectedChild?.id && b.status === 'confirmed')
+      .map(b => b.class_session_id)
+  );
+
   return (
     <div className="page-stack">
-      <div className="child-switcher">
-        {enrolledChildren.map((c, i) => (
-          <button key={c.id} className={selectedChildIdx === i ? 'active' : ''} onClick={() => { setSelectedChildIdx(i); setBookedSessionId(null); }}>
-            <span className="switcher-avatar">{c.initials}</span>
-            <span className="switcher-name">{c.givenName || c.name.split(' ')[0]}</span>
-          </button>
-        ))}
-      </div>
+      {enrolledChildren.length > 1 && (
+        <div className="child-switcher">
+          {enrolledChildren.map((c, i) => (
+            <button key={c.id} className={selectedChildIdx === i ? 'active' : ''} onClick={() => setSelectedChildIdx(i)}>
+              <span className="switcher-avatar">{c.initials}</span>
+              <span className="switcher-name">{c.givenName || c.name.split(' ')[0]}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="page-toolbar">
-        <div><h2>Book a class</h2><p>Choose a session for {childFirstName} this week.</p></div>
-        {activeTerm && <div className="booking-count"><span>{classesRemaining} of {activeTerm.classes_included}</span> credits remaining</div>}
+        <div><h2>Book a class</h2><p>Choose a session for {childFirstName}.</p></div>
       </div>
 
-      {gatingState === 'NO_TERM_EVER' && (
+      {hasTerm && activeTerm && <TermCreditMeter term={activeTerm} />}
+
+      {!hasTerm && (
         <div className="unlock-banner">
           <CircleDollarSign size={20} />
           <div>
-            <strong>Purchase a term to use class credits</strong>
-            <span>Individual classes unlock after your first term purchase.</span>
+            <strong>{gatingState === 'TERM_EXPIRED' ? 'Your term has expired' : 'No term purchased yet'}</strong>
+            <span>{gatingState === 'TERM_EXPIRED' ? 'Renew your term to continue booking classes.' : 'Purchase a term to start booking classes for your children.'}</span>
           </div>
-          <Button onClick={() => navigate('/parent/payments')} variant="secondary">Purchase term</Button>
+          <Button onClick={() => navigate('/parent/payments')} variant="secondary" icon={ArrowRight}>
+            {gatingState === 'TERM_EXPIRED' ? 'Renew term' : 'Purchase term'}
+          </Button>
         </div>
       )}
-      {gatingState === 'TERM_EXPIRED' && (
-        <div className="unlock-banner">
-          <CircleDollarSign size={20} />
-          <div><strong>Your term has expired</strong><span>Renew your term to use credits again, or book individual classes.</span></div>
-          <Button onClick={() => navigate('/parent/payments')} variant="secondary">Renew term</Button>
-        </div>
-      )}
-      {gatingState === 'ACTIVE_TERM' && classesRemaining === 0 && (
-        <div className="unlock-banner">
-          <CircleDollarSign size={20} />
-          <div><strong>All {activeTerm?.classes_included} credits used</strong><span>Book individual classes or renew your term early.</span></div>
-          <Button onClick={() => navigate('/parent/payments')} variant="secondary">Renew term</Button>
-        </div>
-      )}
-
-      {activeTerm && <TermCreditMeter term={activeTerm} />}
-
-      <div className="booking-mode-toggle">
-        <span className="booking-mode-label">How would you like to pay?</span>
-        <div className="booking-mode-options">
-          <button
-            className={`booking-mode-btn ${bookingMode === 'term' ? 'active' : ''} ${!canBookRegularClass ? 'disabled' : ''}`}
-            onClick={() => canBookRegularClass && setBookingMode('term')}
-            disabled={!canBookRegularClass}
-          >
-            <Ticket size={16} />
-            <div>
-              <strong>Use a term credit</strong>
-              <span>{canBookRegularClass ? `${classesRemaining} credit${classesRemaining !== 1 ? 's' : ''} remaining` : 'No credits available'}</span>
-            </div>
-            {bookingMode === 'term' && canBookRegularClass && <Check size={15} className="mode-check" />}
-          </button>
-          <button
-            className={`booking-mode-btn ${bookingMode === 'individual' ? 'active' : ''} ${gatingState === 'NO_TERM_EVER' ? 'disabled' : ''}`}
-            onClick={() => gatingState !== 'NO_TERM_EVER' && setBookingMode('individual')}
-            disabled={gatingState === 'NO_TERM_EVER'}
-          >
-            <CreditCard size={16} />
-            <div>
-              <strong>Book individually</strong>
-              <span>Pay per class · bank transfer</span>
-            </div>
-            {bookingMode === 'individual' && <Check size={15} className="mode-check" />}
-          </button>
-        </div>
-      </div>
 
       {loadingSessions && <p style={{ color: 'var(--muted)', fontSize: 13 }}>Loading classes…</p>}
 
       <div className="classes-list">
         {sessions.map(session => {
-          const isBooked = bookedSessionId === session.id;
+          const isBooked = bookedSessionIds.has(session.id);
           const isFull = session.spaces_left === 0;
           const color = COLORS[session.subject] ?? 'yellow';
-          const canBook = !isFull && (usingCredit ? canBookRegularClass : canBookIndividualClass);
           const d = new Date(session.starts_at);
           const dayName = d.toLocaleDateString('en-AU', { weekday: 'long' });
           const timeStr = d.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' });
@@ -176,26 +150,16 @@ export function BookClassPage() {
                 <div className={`mini-avatar ${color}-bg`}>{session.teacher_name.split(' ').map(p => p[0]).join('')}</div>
                 <span>with <b>{session.teacher_name}</b></span>
               </div>
-              <div className="class-card-cost">
-                {usingCredit
-                  ? <span className="cost-badge credit">1 credit</span>
-                  : <span className="cost-badge individual">Pay by bank transfer</span>
-                }
-              </div>
               {isBooked ? (
                 <div className="booked-confirm"><Check size={16} /> Booked</div>
               ) : isFull ? (
-                <Button variant="soft" onClick={() => { if (selectedChild) dataClient.joinWaitlist(selectedChild.id, session.id); }}>
-                  <Users size={15} /> Join waiting list
-                </Button>
-              ) : canBook ? (
+                <Button variant="soft" disabled><Users size={15} /> Class full</Button>
+              ) : hasTerm ? (
                 <Button onClick={() => { setConfirming(session); setBookError(''); }} icon={Check}>
-                  {usingCredit ? 'Book with credit' : 'Book individually'}
+                  Confirm booking
                 </Button>
               ) : (
-                <Button variant="soft" disabled>
-                  {gatingState === 'NO_TERM_EVER' ? 'Purchase a term first' : 'Not available'}
-                </Button>
+                <Button variant="soft" disabled><CircleDollarSign size={15} /> Purchase term first</Button>
               )}
             </div>
           );
@@ -213,31 +177,21 @@ export function BookClassPage() {
             <button className="modal-close" onClick={() => setConfirming(null)}><X size={18} /></button>
             <div className="modal-icon"><Check size={22} /></div>
             <h2>Confirm booking</h2>
-            <p>Review the details below and confirm.</p>
+            <p>This will use one session from your active term.</p>
             <div className="review-details">
               <div className="review-detail-row"><span>Child</span><b>{selectedChild?.name ?? '—'}</b></div>
               <div className="review-detail-row"><span>Subject</span><b>{confirming.subject}</b></div>
               <div className="review-detail-row"><span>Date</span><b>{new Date(confirming.starts_at).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })}</b></div>
               <div className="review-detail-row"><span>Time</span><b>{new Date(confirming.starts_at).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })}</b></div>
               <div className="review-detail-row"><span>Tutor</span><b>{confirming.teacher_name}</b></div>
-              <div className="review-detail-row">
-                <span>Cost</span>
-                <b>{usingCredit ? '1 class credit (from your term)' : 'Pay by bank transfer'}</b>
-              </div>
             </div>
             {bookError && <p className="auth-error">{bookError}</p>}
             <Button
               disabled={bookMutation.isPending}
-              onClick={() => {
-                if (usingCredit) {
-                  bookMutation.mutate(confirming.id);
-                } else {
-                  navigate('/parent/payments', { state: { type: 'individual', childId: selectedChild?.id, sessionId: confirming.id } });
-                }
-              }}
-              icon={usingCredit ? Check : ArrowRight}
+              onClick={() => bookMutation.mutate(confirming)}
+              icon={Check}
             >
-              {bookMutation.isPending ? 'Booking…' : usingCredit ? 'Confirm booking' : 'Proceed to payment'}
+              {bookMutation.isPending ? 'Booking…' : 'Yes, confirm booking'}
             </Button>
             <button className="modal-cancel" onClick={() => setConfirming(null)}>Not now</button>
           </div>

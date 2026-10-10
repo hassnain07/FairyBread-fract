@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Package, Plus, X, Upload } from 'lucide-react';
+import { TableControls } from '../../../components/ui/TableControls';
+import { usePagination, useSearch } from '../../../hooks/usePagination';
 import { dataClient } from '../../../lib/data/client';
 import { qk } from '../../../lib/data/queryKeys';
 import { toAppError } from '../../../lib/data/errors';
@@ -43,32 +45,29 @@ function ProductModal({ product, onClose }: { product?: AdminShopProduct; onClos
     low_stock_threshold: String(product.low_stock_threshold), is_active: product.is_active,
   } : EMPTY_FORM);
   const [errors, setErrors] = useState<Partial<Record<keyof ProductFormState, string>>>({});
+  const [pendingImage, setPendingImage] = useState<File | null>(null);
   const [imgError, setImgError] = useState('');
-  const [savedId, setSavedId] = useState(product?.id);
 
-  const upsertMutation = useMutation({
-    mutationFn: (input: ShopProductInput) => dataClient.upsertShopProduct!(input),
-    onSuccess: (p) => {
-      setSavedId(p.id);
-      qc.invalidateQueries({ queryKey: qk.adminShopProducts });
-      qc.invalidateQueries({ queryKey: qk.shopProducts });
-    },
-  });
-
-  const imgMutation = useMutation({
-    mutationFn: async (file: File) => {
-      const id = savedId;
-      if (!id) throw new Error('Save the product first.');
-      const path = await dataClient.uploadShopProductImage!(id, file);
-      await dataClient.upsertShopProduct!({ id, image_path: path });
-      return path;
+  const saveMutation = useMutation({
+    mutationFn: async (input: ShopProductInput) => {
+      // Upload image first (if any) so we can include image_path in the single upsert.
+      // For new products, generate an id upfront so the storage path is stable.
+      const productId = input.id ?? crypto.randomUUID();
+      let imagePath: string | undefined;
+      if (pendingImage) {
+        imagePath = await dataClient.uploadShopProductImage!(productId, pendingImage);
+      }
+      return dataClient.upsertShopProduct!({
+        ...input,
+        id: productId,
+        ...(imagePath !== undefined ? { image_path: imagePath } : {}),
+      });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.adminShopProducts });
       qc.invalidateQueries({ queryKey: qk.shopProducts });
-      setImgError('');
+      onClose();
     },
-    onError: (e) => setImgError(toAppError(e).message),
   });
 
   function handleSave(e: React.FormEvent) {
@@ -76,8 +75,8 @@ function ProductModal({ product, onClose }: { product?: AdminShopProduct; onClos
     const errs = validate(form);
     if (Object.keys(errs).length) { setErrors(errs); return; }
     setErrors({});
-    upsertMutation.mutate({
-      id: savedId,
+    saveMutation.mutate({
+      id: product?.id,
       title: form.title.trim(), category: form.category,
       description: form.description.trim(), details: form.details.trim(),
       price_cents: Number(form.price_cents),
@@ -87,20 +86,22 @@ function ProductModal({ product, onClose }: { product?: AdminShopProduct; onClos
     });
   }
 
-  function handleImg(e: React.ChangeEvent<HTMLInputElement>) {
+  function handleImgPick(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
     if (!IMG_MIME.includes(file.type)) { setImgError('Please upload a JPG, PNG or WebP image.'); return; }
     if (file.size > 5 * 1024 * 1024) { setImgError('Image must be under 5 MB.'); return; }
     setImgError('');
-    imgMutation.mutate(file);
-    e.target.value = '';
+    setPendingImage(file);
   }
 
   function setField<K extends keyof ProductFormState>(k: K, v: ProductFormState[K]) {
     setForm(f => ({ ...f, [k]: v }));
     setErrors(er => ({ ...er, [k]: undefined }));
   }
+
+  const currentImageUrl = product?.image_url ?? null;
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -146,25 +147,29 @@ function ProductModal({ product, onClose }: { product?: AdminShopProduct; onClos
             </div>
           </div>
           <Toggle on={form.is_active} onToggle={() => setField('is_active', !form.is_active)} label="Active (visible in shop)" sublabel={form.is_active ? 'Visible' : 'Hidden'} />
-          {upsertMutation.isError && <p className="auth-error"><span>{toAppError(upsertMutation.error).message}</span></p>}
-          {upsertMutation.isSuccess && <p style={{ fontSize: 13, color: 'var(--green)' }}>✓ Saved</p>}
-          <button type="submit" className="btn btn-primary" disabled={upsertMutation.isPending}>
-            {upsertMutation.isPending ? 'Saving…' : 'Save product'}
+
+          <div style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
+            <label style={{ fontSize: 13, fontWeight: 500, display: 'block', marginBottom: 8 }}>Product image (JPG/PNG/WebP, max 5 MB)</label>
+            {(pendingImage || currentImageUrl) && (
+              <img
+                src={pendingImage ? URL.createObjectURL(pendingImage) : currentImageUrl!}
+                alt="preview"
+                style={{ width: '100%', maxHeight: 160, objectFit: 'contain', borderRadius: 8, marginBottom: 8, background: 'var(--surface)' }}
+              />
+            )}
+            <input ref={imgRef} type="file" accept="image/jpeg,image/png,image/webp" style={{ display: 'none' }} onChange={handleImgPick} />
+            <button type="button" className="btn btn-sm" onClick={() => imgRef.current?.click()}>
+              <Upload size={13} /> {pendingImage ? 'Change image' : currentImageUrl ? 'Replace image' : 'Choose image'}
+            </button>
+            {pendingImage && <span style={{ fontSize: 12, color: 'var(--muted)', marginLeft: 8 }}>{pendingImage.name}</span>}
+            {imgError && <p className="auth-error" style={{ marginTop: 6 }}><span>{imgError}</span></p>}
+          </div>
+
+          {saveMutation.isError && <p className="auth-error"><span>{toAppError(saveMutation.error).message}</span></p>}
+          <button type="submit" className="btn btn-primary" disabled={saveMutation.isPending}>
+            {saveMutation.isPending ? 'Saving…' : 'Save product'}
           </button>
         </form>
-
-        {/* Image upload — only after product is saved */}
-        {savedId && (
-          <div style={{ marginTop: 16, borderTop: '1px solid var(--line)', paddingTop: 14 }}>
-            <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 8 }}>Product image (JPG/PNG/WebP, max 5 MB)</p>
-            <input ref={imgRef} type="file" accept="image/jpeg,image/png,image/webp" style={{ display: 'none' }} onChange={handleImg} />
-            <button className="btn btn-sm" onClick={() => imgRef.current?.click()} disabled={imgMutation.isPending}>
-              <Upload size={13} /> {imgMutation.isPending ? 'Uploading…' : 'Upload image'}
-            </button>
-            {imgError && <p className="auth-error" style={{ marginTop: 6 }}><span>{imgError}</span></p>}
-            {imgMutation.isSuccess && <p style={{ fontSize: 13, color: 'var(--green)', marginTop: 6 }}>✓ Image updated</p>}
-          </div>
-        )}
       </div>
     </div>
   );
@@ -188,6 +193,14 @@ export function AdminShopProductsPage() {
     },
   });
 
+  const { search, onSearch } = useSearch(() => onPage(1));
+  const searchFiltered = products.filter(p => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return p.title.toLowerCase().includes(q) || p.category.toLowerCase().includes(q);
+  });
+  const { page, totalPages, paged, onPage, total } = usePagination(searchFiltered);
+
   if (isLoading) return <p style={{ color: 'var(--muted)', padding: '24px 0' }}>Loading products…</p>;
   if (isError) return <p className="auth-error"><span>Failed to load products.</span></p>;
 
@@ -205,33 +218,32 @@ export function AdminShopProductsPage() {
           <p>No products yet. Add your first product above.</p>
         </div>
       ) : (
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr><th>Title</th><th>Category</th><th>Price</th><th>Stock</th><th>Status</th><th>Active</th><th>Actions</th></tr>
-            </thead>
-            <tbody>
-              {products.map(p => (
-                <tr key={p.id}>
-                  <td style={{ fontWeight: 600 }}>{p.title}</td>
-                  <td><span className="shop-category-pill">{p.category}</span></td>
-                  <td>{formatMoney(p.price_cents)}</td>
-                  <td>{p.stock_quantity}</td>
-                  <td>
-                    <span className={`shop-status-badge shop-status-${p.status === 'In Stock' ? 'instock' : p.status === 'Low Stock' ? 'low' : 'out'}`}>
-                      {p.status}
-                    </span>
-                  </td>
-                  <td>
-                    <Toggle on={p.is_active} onToggle={() => toggleMutation.mutate(p)} label="" sublabel="" />
-                  </td>
-                  <td>
-                    <button className="btn btn-sm" onClick={() => setEditing(p)}>Edit</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="card table-card">
+          <TableControls search={search} onSearch={onSearch} page={page} totalPages={totalPages} total={total} onPage={onPage} placeholder="Search products…" />
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Title</th><th>Category</th><th>Price</th><th>Stock</th><th>Status</th><th>Active</th><th>Actions</th></tr>
+              </thead>
+              <tbody>
+                {paged.map(p => (
+                  <tr key={p.id}>
+                    <td style={{ fontWeight: 600 }}>{p.title}</td>
+                    <td><span className="shop-category-pill">{p.category}</span></td>
+                    <td>{formatMoney(p.price_cents)}</td>
+                    <td>{p.stock_quantity}</td>
+                    <td>
+                      <span className={`shop-status-badge shop-status-${p.status === 'In Stock' ? 'instock' : p.status === 'Low Stock' ? 'low' : 'out'}`}>
+                        {p.status}
+                      </span>
+                    </td>
+                    <td><Toggle on={p.is_active} onToggle={() => toggleMutation.mutate(p)} label="" sublabel="" /></td>
+                    <td><button className="btn btn-sm" onClick={() => setEditing(p)}>Edit</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

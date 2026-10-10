@@ -7,35 +7,29 @@ import { qk } from '../../../lib/data/queryKeys';
 import { toAppError } from '../../../lib/data/errors';
 import { formatMoney } from '../../../lib/utils/money';
 import type { ClassSlot, ClassSlotInput } from '../../../types/teacher';
+import type { SchoolTerm } from '../../../types/term';
 import type { Closure } from '../../../types/admin';
 
 const DAYS_ISO: Record<number, string> = { 1: 'Monday', 2: 'Tuesday', 3: 'Wednesday', 4: 'Thursday', 5: 'Friday', 6: 'Saturday', 7: 'Sunday' };
 const DAY_OPTIONS = [1, 2, 3, 4, 5, 6];
 
 type SlotForm = {
-  program_id: string;
-  teacher_id: string;
-  day_of_week: string;
-  start_time: string;
-  duration_minutes: string;
-  capacity: string;
-  price_cents: string;
+  program_id: string; teacher_id: string; day_of_week: string;
+  start_time: string; duration_minutes: string; capacity: string; price_cents: string;
 };
-
 const EMPTY_SLOT: SlotForm = {
-  program_id: '',
-  teacher_id: '',
-  day_of_week: '1',
-  start_time: '15:30',
-  duration_minutes: '60',
-  capacity: '15',
-  price_cents: '5000',
+  program_id: '', teacher_id: '', day_of_week: '1',
+  start_time: '15:30', duration_minutes: '60', capacity: '15', price_cents: '5000',
 };
 
 export function AdminTimetablePage() {
   const qc = useQueryClient();
 
-  // ── Slot state ──────────────────────────────────────────────────────────────
+  const [selectedTermId, setSelectedTermId] = useState<string | null>(null);
+  const [showNewTerm, setShowNewTerm] = useState(false);
+  const [termForm, setTermForm] = useState({ label: '', start_date: '', end_date: '' });
+  const [termError, setTermError] = useState('');
+
   const [showSlotForm, setShowSlotForm] = useState(false);
   const [editingSlotId, setEditingSlotId] = useState<string | null>(null);
   const [slotForm, setSlotForm] = useState<SlotForm>(EMPTY_SLOT);
@@ -44,89 +38,101 @@ export function AdminTimetablePage() {
   const [cancelFuture, setCancelFuture] = useState(false);
   const [deactivateError, setDeactivateError] = useState('');
 
-  // ── Session cancel state ────────────────────────────────────────────────────
   const [cancelSessionId, setCancelSessionId] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelSessionError, setCancelSessionError] = useState('');
 
-  // ── Closure state ───────────────────────────────────────────────────────────
   const [showClosureForm, setShowClosureForm] = useState(false);
   const [closureForm, setClosureForm] = useState({ date: '', label: '' });
   const [closureError, setClosureError] = useState('');
 
-  // ── Queries ─────────────────────────────────────────────────────────────────
+  const { data: schoolTerms = [], isLoading: termsLoading } = useQuery({
+    queryKey: qk.schoolTerms,
+    queryFn: () => dataClient.getSchoolTerms!(),
+  });
+
+  const activeTerm = schoolTerms.find(t => t.is_active) ?? schoolTerms[0] ?? null;
+  const viewingTermId = selectedTermId ?? activeTerm?.id ?? null;
+  const viewingTerm = schoolTerms.find(t => t.id === viewingTermId) ?? null;
+
   const { data: slots = [], isLoading: slotsLoading } = useQuery({
     queryKey: qk.classSlots,
     queryFn: () => dataClient.getClassSlots(),
   });
 
-  const { data: teachers = [] } = useQuery({
-    queryKey: qk.teachers,
-    queryFn: () => dataClient.getTeachers(),
-  });
+  const { data: teachers = [] } = useQuery({ queryKey: qk.teachers, queryFn: () => dataClient.getTeachers() });
+  const { data: programs = [] } = useQuery({ queryKey: qk.programs, queryFn: () => dataClient.getPrograms() });
+  const { data: closures = [] } = useQuery({ queryKey: ['closures'], queryFn: () => dataClient.getClosures() });
 
-  const { data: programs = [] } = useQuery({
-    queryKey: qk.programs,
-    queryFn: () => dataClient.getPrograms(),
-  });
+  const termFrom = viewingTerm ? new Date(viewingTerm.start_date + 'T00:00:00').toISOString() : new Date().toISOString();
+  const termTo = viewingTerm ? new Date(viewingTerm.end_date + 'T00:00:00').toISOString() : new Date(Date.now() + 70 * 86400_000).toISOString();
 
-  const { data: closures = [] } = useQuery({
-    queryKey: ['closures'],
-    queryFn: () => dataClient.getClosures(),
-  });
-
-  const today = new Date().toISOString();
-  const weekEnd = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
   const { data: sessions = [] } = useQuery({
-    queryKey: qk.sessions({ from: today, to: weekEnd }),
-    queryFn: () => dataClient.getUpcomingSessions({ from: today, to: weekEnd }),
+    queryKey: qk.sessions({ from: termFrom, to: termTo }),
+    queryFn: () => dataClient.getUpcomingSessions({ from: termFrom, to: termTo }),
+    enabled: !!viewingTerm,
   });
+
+  // Filter slots to those belonging to the selected school term via sessions overlap
+  const termSlotIds = viewingTerm
+    ? new Set(sessions.map(s => s.class_id))
+    : new Set(slots.map(s => s.id));
+  const termSlots = slots.filter(s => termSlotIds.has(s.id));
+
+  const activeDays = DAY_OPTIONS.filter(d => termSlots.some(s => s.day_of_week === d));
+  const teacherMap = Object.fromEntries(teachers.map(t => [t.id, t]));
+  const programMap = Object.fromEntries(programs.map(p => [p.id, p]));
+
+  // ── School term mutations ───────────────────────────────────────────────────
+  const { mutate: createTerm, isPending: creatingTerm } = useMutation({
+    mutationFn: () => dataClient.createSchoolTerm!(termForm.label.trim(), termForm.start_date, termForm.end_date),
+    onSuccess: (t) => {
+      qc.invalidateQueries({ queryKey: qk.schoolTerms });
+      qc.invalidateQueries({ queryKey: qk.settings });
+      setSelectedTermId(t.id);
+      setShowNewTerm(false);
+      setTermForm({ label: '', start_date: '', end_date: '' });
+      setTermError('');
+    },
+    onError: (e: Error) => setTermError(toAppError(e).message),
+  });
+
+  function handleCreateTerm() {
+    if (!termForm.label.trim()) { setTermError('Term name is required.'); return; }
+    if (!termForm.start_date || !termForm.end_date) { setTermError('Start and end dates are required.'); return; }
+    if (termForm.end_date <= termForm.start_date) { setTermError('End date must be after start date.'); return; }
+    createTerm();
+  }
 
   // ── Slot mutations ──────────────────────────────────────────────────────────
   const { mutate: createSlot, isPending: creating } = useMutation({
-    mutationFn: (f: SlotForm) => dataClient.createClassSlot({
-      program_id: f.program_id,
-      teacher_id: f.teacher_id,
-      day_of_week: Number(f.day_of_week),
-      start_time: f.start_time,
-      duration_minutes: Number(f.duration_minutes),
-      capacity: Number(f.capacity),
+    mutationFn: (f: SlotForm & { school_term_id: string }) => dataClient.createClassSlot({
+      program_id: f.program_id, teacher_id: f.teacher_id,
+      day_of_week: Number(f.day_of_week), start_time: f.start_time,
+      duration_minutes: Number(f.duration_minutes), capacity: Number(f.capacity),
       price_cents: Number(f.price_cents),
+      school_term_id: f.school_term_id,
     } as ClassSlotInput),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: qk.classSlots });
-      qc.invalidateQueries({ queryKey: qk.sessions() });
-      closeSlotForm();
-    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: qk.classSlots }); qc.invalidateQueries({ queryKey: qk.sessions() }); closeSlotForm(); },
     onError: (e: Error) => setSlotError(toAppError(e).message),
   });
 
   const { mutate: updateSlot, isPending: updating } = useMutation({
     mutationFn: ({ id, f }: { id: string; f: SlotForm }) => dataClient.updateClassSlot(id, {
-      program_id: f.program_id,
-      teacher_id: f.teacher_id,
-      day_of_week: Number(f.day_of_week),
-      start_time: f.start_time,
-      duration_minutes: Number(f.duration_minutes),
-      capacity: Number(f.capacity),
+      program_id: f.program_id, teacher_id: f.teacher_id,
+      day_of_week: Number(f.day_of_week), start_time: f.start_time,
+      duration_minutes: Number(f.duration_minutes), capacity: Number(f.capacity),
       price_cents: Number(f.price_cents),
     }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: qk.classSlots });
-      qc.invalidateQueries({ queryKey: qk.sessions() });
-      closeSlotForm();
-    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: qk.classSlots }); qc.invalidateQueries({ queryKey: qk.sessions() }); closeSlotForm(); },
     onError: (e: Error) => setSlotError(toAppError(e).message),
   });
 
   const { mutate: deactivateSlot, isPending: deactivating } = useMutation({
     mutationFn: ({ id, cf }: { id: string; cf: boolean }) => dataClient.deactivateClassSlot(id, cf),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: qk.classSlots });
-      qc.invalidateQueries({ queryKey: qk.sessions() });
-      qc.invalidateQueries({ queryKey: qk.allBookings });
-      setDeactivateId(null);
-      setDeactivateError('');
+      qc.invalidateQueries({ queryKey: qk.classSlots }); qc.invalidateQueries({ queryKey: qk.sessions() });
+      qc.invalidateQueries({ queryKey: qk.allBookings }); setDeactivateId(null); setDeactivateError('');
     },
     onError: (e: Error) => setDeactivateError(toAppError(e).message),
   });
@@ -134,23 +140,17 @@ export function AdminTimetablePage() {
   const { mutate: cancelSession, isPending: cancellingSession } = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) => dataClient.cancelSession(id, reason || undefined),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: qk.sessions() });
-      qc.invalidateQueries({ queryKey: qk.allBookings });
-      setCancelSessionId(null);
-      setCancelReason('');
-      setCancelSessionError('');
+      qc.invalidateQueries({ queryKey: qk.sessions() }); qc.invalidateQueries({ queryKey: qk.allBookings });
+      setCancelSessionId(null); setCancelReason(''); setCancelSessionError('');
     },
     onError: (e: Error) => setCancelSessionError(toAppError(e).message),
   });
 
-  // ── Closure mutations ───────────────────────────────────────────────────────
   const { mutate: upsertClosure, isPending: savingClosure } = useMutation({
     mutationFn: (c: { date: string; label: string }) => dataClient.upsertClosure(c),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['closures'] });
-      setShowClosureForm(false);
-      setClosureForm({ date: '', label: '' });
-      setClosureError('');
+      qc.invalidateQueries({ queryKey: ['closures'] }); setShowClosureForm(false);
+      setClosureForm({ date: '', label: '' }); setClosureError('');
     },
     onError: (e: Error) => setClosureError(toAppError(e).message),
   });
@@ -160,34 +160,25 @@ export function AdminTimetablePage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['closures'] }),
   });
 
-  // ── Helpers ─────────────────────────────────────────────────────────────────
   function openAddSlot() {
+    if (!viewingTermId) return;
     setEditingSlotId(null);
     setSlotForm({ ...EMPTY_SLOT, program_id: programs[0]?.id ?? '', teacher_id: teachers[0]?.id ?? '' });
-    setSlotError('');
-    setShowSlotForm(true);
+    setSlotError(''); setShowSlotForm(true);
   }
 
   function openEditSlot(slot: ClassSlot) {
     setEditingSlotId(slot.id);
     setSlotForm({
-      program_id: slot.program_id,
-      teacher_id: slot.teacher_id,
-      day_of_week: String(slot.day_of_week),
-      start_time: slot.start_time,
-      duration_minutes: String(slot.duration_minutes),
-      capacity: String(slot.capacity),
+      program_id: slot.program_id, teacher_id: slot.teacher_id,
+      day_of_week: String(slot.day_of_week), start_time: slot.start_time,
+      duration_minutes: String(slot.duration_minutes), capacity: String(slot.capacity),
       price_cents: String(slot.price_cents ?? 5000),
     });
-    setSlotError('');
-    setShowSlotForm(true);
+    setSlotError(''); setShowSlotForm(true);
   }
 
-  function closeSlotForm() {
-    setShowSlotForm(false);
-    setEditingSlotId(null);
-    setSlotError('');
-  }
+  function closeSlotForm() { setShowSlotForm(false); setEditingSlotId(null); setSlotError(''); }
 
   function handleSlotSubmit() {
     if (!slotForm.program_id) { setSlotError('Please select a program.'); return; }
@@ -196,17 +187,9 @@ export function AdminTimetablePage() {
     const cap = Number(slotForm.capacity);
     if (!cap || cap < 1) { setSlotError('Capacity must be at least 1.'); return; }
     setSlotError('');
-    if (editingSlotId) {
-      updateSlot({ id: editingSlotId, f: slotForm });
-    } else {
-      createSlot(slotForm);
-    }
+    if (editingSlotId) updateSlot({ id: editingSlotId, f: slotForm });
+    else createSlot({ ...slotForm, school_term_id: viewingTermId! });
   }
-
-  // Group slots by day
-  const activeDays = DAY_OPTIONS.filter(d => slots.some(s => s.day_of_week === d));
-  const teacherMap = Object.fromEntries(teachers.map(t => [t.id, t]));
-  const programMap = Object.fromEntries(programs.map(p => [p.id, p]));
 
   return (
     <div className="page-stack">
@@ -214,19 +197,60 @@ export function AdminTimetablePage() {
         <div><h2>Timetable</h2><p>Manage the term class schedule.</p></div>
         <div style={{ display: 'flex', gap: 8 }}>
           <Button variant="soft" icon={CalendarOff} onClick={() => setShowClosureForm(true)}>Add closure</Button>
-          <Button icon={Plus} onClick={openAddSlot}>Add class</Button>
+          <Button variant="soft" icon={Plus} onClick={() => { setShowNewTerm(true); setTermError(''); }}>New term</Button>
+          <Button icon={Plus} onClick={openAddSlot} disabled={!viewingTermId}>Add class</Button>
         </div>
       </div>
+
+      {/* ── Term selector ── */}
+      {!termsLoading && schoolTerms.length > 0 && (
+        <div className="card" style={{ padding: '14px 20px' }}>
+          <span className="label" style={{ display: 'block', marginBottom: 10 }}>Select term to view</span>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {schoolTerms.map(t => (
+              <button
+                key={t.id}
+                onClick={() => setSelectedTermId(t.id)}
+                className={`booking-mode-btn ${viewingTermId === t.id ? 'active' : ''}`}
+                style={{ padding: '8px 16px', fontSize: 13 }}
+              >
+                {t.label}
+                {t.is_active && <span className="table-status confirmed" style={{ marginLeft: 8, fontSize: 10 }}>Active</span>}
+              </button>
+            ))}
+          </div>
+          {viewingTerm && (
+            <p style={{ fontSize: 12, color: 'var(--muted)', marginTop: 8 }}>
+              {new Date(viewingTerm.start_date + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
+              {' — '}
+              {new Date(viewingTerm.end_date + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
+              {' · 10 weeks'}
+            </p>
+          )}
+        </div>
+      )}
+
+      {!termsLoading && schoolTerms.length === 0 && (
+        <div className="card" style={{ padding: 20 }}>
+          <p style={{ color: 'var(--muted)', fontSize: 14 }}>No school terms created yet. Click <strong>New term</strong> to create the first one, then add classes to it.</p>
+        </div>
+      )}
+
+      {!termsLoading && schoolTerms.length > 0 && !viewingTermId && (
+        <div className="card" style={{ padding: 20 }}>
+          <p style={{ color: 'var(--muted)', fontSize: 14 }}>Select a term above to view or add classes.</p>
+        </div>
+      )}
 
       {/* ── Timetable grid ── */}
       <div className="card timetable-card">
         {slotsLoading && <p style={{ padding: 24, color: 'var(--muted)' }}>Loading…</p>}
-        {!slotsLoading && slots.length === 0 && (
+        {!slotsLoading && termSlots.length === 0 && (
           <div className="timetable-empty">
             <p>No classes added yet. Click <strong>Add class</strong> to build the timetable.</p>
           </div>
         )}
-        {!slotsLoading && slots.length > 0 && (
+        {!slotsLoading && termSlots.length > 0 && (
           <div className="timetable-scroll">
             <table className="timetable-table">
               <thead>
@@ -236,11 +260,11 @@ export function AdminTimetablePage() {
                 </tr>
               </thead>
               <tbody>
-                {[...new Set(slots.map(s => s.start_time))].sort().map(time => (
+                {[...new Set(termSlots.map(s => s.start_time))].sort().map(time => (
                   <tr key={time}>
                     <td className="timetable-time-cell">{time}</td>
                     {activeDays.map(day => {
-                      const cell = slots.filter(s => s.day_of_week === day && s.start_time === time);
+                      const cell = termSlots.filter(s => s.day_of_week === day && s.start_time === time);
                       return (
                         <td key={day} className="timetable-cell">
                           {cell.map(slot => {
@@ -302,6 +326,30 @@ export function AdminTimetablePage() {
         </div>
       )}
 
+      {/* ── New school term modal ── */}
+      {showNewTerm && (
+        <div className="modal-backdrop" onClick={() => setShowNewTerm(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setShowNewTerm(false)}><X size={18} /></button>
+            <div className="modal-icon"><Plus size={22} /></div>
+            <h2>Create school term</h2>
+            <p>Define a 10-week academic term. Classes added to the timetable will generate sessions within this window.</p>
+            <div className="add-modal-form" style={{ marginTop: 16 }}>
+              <label>Term name<input value={termForm.label} onChange={e => setTermForm(f => ({ ...f, label: e.target.value }))} placeholder="e.g. Term 1 2025" /></label>
+              <label>Start date<input type="date" value={termForm.start_date} onChange={e => setTermForm(f => ({ ...f, start_date: e.target.value }))} /></label>
+              <label>End date<input type="date" value={termForm.end_date} onChange={e => setTermForm(f => ({ ...f, end_date: e.target.value }))} /></label>
+            </div>
+            {termError && <div className="auth-error" style={{ marginTop: 8 }}>{termError}</div>}
+            <div className="review-actions" style={{ marginTop: 16 }}>
+              <Button variant="ghost" onClick={() => setShowNewTerm(false)} icon={X}>Cancel</Button>
+              <Button icon={Check} onClick={handleCreateTerm} disabled={creatingTerm}>
+                {creatingTerm ? 'Creating…' : 'Create term'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Add/Edit slot modal ── */}
       {showSlotForm && (
         <div className="modal-backdrop" onClick={closeSlotForm}>
@@ -309,7 +357,7 @@ export function AdminTimetablePage() {
             <button className="modal-close" onClick={closeSlotForm}><X size={18} /></button>
             <div className="modal-icon"><Plus size={22} /></div>
             <h2>{editingSlotId ? 'Edit class' : 'Add a class'}</h2>
-            <p>Fill in the details for this timetable slot.</p>
+            <p>{editingSlotId ? 'Update the details for this slot.' : `Adding to ${viewingTerm?.label ?? 'selected term'}.`}</p>
             <div className="form-grid" style={{ marginTop: 20 }}>
               <label style={{ gridColumn: '1 / -1' }}>
                 Program
@@ -331,18 +379,9 @@ export function AdminTimetablePage() {
                   {DAY_OPTIONS.map(d => <option key={d} value={d}>{DAYS_ISO[d]}</option>)}
                 </select>
               </label>
-              <label>
-                Start time (24h)
-                <input value={slotForm.start_time} onChange={e => setSlotForm({ ...slotForm, start_time: e.target.value })} placeholder="e.g. 15:30" />
-              </label>
-              <label>
-                Duration (minutes)
-                <input type="number" min={15} value={slotForm.duration_minutes} onChange={e => setSlotForm({ ...slotForm, duration_minutes: e.target.value })} />
-              </label>
-              <label>
-                Capacity
-                <input type="number" min={1} value={slotForm.capacity} onChange={e => setSlotForm({ ...slotForm, capacity: e.target.value })} />
-              </label>
+              <label>Start time (24h)<input value={slotForm.start_time} onChange={e => setSlotForm({ ...slotForm, start_time: e.target.value })} placeholder="e.g. 15:30" /></label>
+              <label>Duration (min)<input type="number" min={15} value={slotForm.duration_minutes} onChange={e => setSlotForm({ ...slotForm, duration_minutes: e.target.value })} /></label>
+              <label>Capacity<input type="number" min={1} value={slotForm.capacity} onChange={e => setSlotForm({ ...slotForm, capacity: e.target.value })} /></label>
               <label style={{ gridColumn: '1 / -1' }}>
                 Price (cents, e.g. 5000 = $50.00)
                 <input type="number" min={0} value={slotForm.price_cents} onChange={e => setSlotForm({ ...slotForm, price_cents: e.target.value })} />
@@ -367,7 +406,7 @@ export function AdminTimetablePage() {
             <div style={{ margin: '16px 0' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14 }}>
                 <input type="checkbox" checked={cancelFuture} onChange={e => setCancelFuture(e.target.checked)} />
-                Cancel all upcoming sessions and return credits to families
+                Cancel all upcoming sessions and notify families
               </label>
             </div>
             {deactivateError && <div className="auth-error">{deactivateError}</div>}
@@ -385,7 +424,7 @@ export function AdminTimetablePage() {
           <div className="modal" onClick={e => e.stopPropagation()}>
             <button className="modal-close" onClick={() => setCancelSessionId(null)}><X size={18} /></button>
             <h2>Cancel this session?</h2>
-            <p>Credits will be returned to all booked families and they will be notified.</p>
+            <p>All families booked into this session will be notified.</p>
             <label style={{ display: 'block', marginTop: 16 }}>
               Reason (optional)
               <input value={cancelReason} onChange={e => setCancelReason(e.target.value)} placeholder="e.g. Public holiday" style={{ marginTop: 6 }} />
@@ -408,14 +447,8 @@ export function AdminTimetablePage() {
             <h2>Add closure</h2>
             <p>Sessions on this date will not be generated.</p>
             <div className="form-grid" style={{ marginTop: 16 }}>
-              <label>
-                Date
-                <input type="date" value={closureForm.date} onChange={e => setClosureForm({ ...closureForm, date: e.target.value })} />
-              </label>
-              <label>
-                Label
-                <input value={closureForm.label} onChange={e => setClosureForm({ ...closureForm, label: e.target.value })} placeholder="e.g. Public holiday" />
-              </label>
+              <label>Date<input type="date" value={closureForm.date} onChange={e => setClosureForm({ ...closureForm, date: e.target.value })} /></label>
+              <label>Label<input value={closureForm.label} onChange={e => setClosureForm({ ...closureForm, label: e.target.value })} placeholder="e.g. Public holiday" /></label>
             </div>
             {closureError && <div className="auth-error" style={{ marginTop: 8 }}>{closureError}</div>}
             <Button
@@ -423,9 +456,7 @@ export function AdminTimetablePage() {
                 if (!closureForm.date || !closureForm.label.trim()) { setClosureError('Date and label are required.'); return; }
                 upsertClosure(closureForm);
               }}
-              disabled={savingClosure}
-              icon={Check}
-              style={{ marginTop: 16 }}
+              disabled={savingClosure} icon={Check} style={{ marginTop: 16 }}
             >
               {savingClosure ? 'Saving…' : 'Save closure'}
             </Button>

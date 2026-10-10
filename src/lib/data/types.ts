@@ -1,5 +1,5 @@
 import type { Family, Child, NewChild, ChildPatch, EnrolmentInput } from '../../types/family';
-import type { Term, GatingSnapshot } from '../../types/term';
+import type { Term, SchoolTerm, GatingSnapshot } from '../../types/term';
 import type { ClassBooking, BookingCancelResult, Assessment, StudentReport, NewReport, AttendanceRecord } from '../../types/booking';
 import type { Payment, PaymentIntent, PriceQuote } from '../../types/payment';
 import type { Teacher, ClassSlot, ClassSession, ClassSlotInput, Program } from '../../types/teacher';
@@ -41,6 +41,8 @@ export interface DataClient {
   getAllTerms(): Promise<Term[]>;
   getGating(familyId: string): Promise<GatingSnapshot>;
   adminAdjustCredits(termId: string, delta: number, note: string): Promise<Term>;
+  getSchoolTerms(): Promise<SchoolTerm[]>;
+  createSchoolTerm(label: string, startDate: string, endDate: string): Promise<SchoolTerm>;
 
   // ── Catalog & sessions ────────────────────────────────────────────────────
   getTeachers(): Promise<Teacher[]>;
@@ -76,8 +78,10 @@ export interface DataClient {
 
   // ── Assessments ───────────────────────────────────────────────────────────
   getAssessments(familyId: string): Promise<Assessment[]>;
-  getTeacherAssessments(): Promise<Assessment[]>;
-  createTeacherAssessments(rows: Array<{ childId: string; classId?: string; date: string; time: string }>): Promise<Assessment[]>;
+  getAdminNewStudentAssessments(): Promise<Assessment[]>;
+  getAdminTermAssessments(): Promise<Assessment[]>;
+  adminCreateTermAssessment(input: { childId: string; teacherId: string; date: string; time: string }): Promise<Assessment>;
+  adminCreateSubjectAssessments(input: { programId: string; date: string; time: string }): Promise<{ count: number; teacher: string; program: string }>;
   updateAssessment(id: string, patch: Partial<Pick<Assessment, 'status' | 'scheduled_date' | 'scheduled_time' | 'notes'>>): Promise<Assessment>;
 
   // ── Reports & attendance ──────────────────────────────────────────────────
@@ -119,5 +123,5 @@ export interface DataClient {
 
   // ── Admin ─────────────────────────────────────────────────────────────────
   getAdminStats(): Promise<AdminStats>;
-  inviteStaff(input: { email: string; fullName: string; role: 'teacher' | 'admin'; subjects?: string[]; color?: string }): Promise<void>;
+  inviteStaff(input: { email: string; fullName: string; role: 'teacher' | 'admin'; subjects?: string[]; color?: string }): Promise<{ invited: boolean }>;
 }

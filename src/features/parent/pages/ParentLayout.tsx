@@ -7,6 +7,7 @@ import { useAuth } from '../../../app/providers';
 const nav = [
   { id: '/parent', label: 'Overview', icon: LayoutDashboard },
   { id: '/parent/children', label: 'My children', icon: Users },
+  { id: '/parent/assessments', label: 'My assessments', icon: ClipboardList },
   { id: '/parent/book-assessment', label: 'Book assessment', icon: ClipboardList },
   { id: '/parent/book-class', label: 'Book a class', icon: CalendarDays },
   { id: '/parent/bookings', label: 'My bookings', icon: Ticket },
@@ -21,6 +22,7 @@ const nav = [
 const subtitles: Record<string, string> = {
   '/parent': 'Here is what is happening with your family this week.',
   '/parent/children': 'Keep an eye on their learning journey.',
+  '/parent/assessments': 'Track upcoming and past assessments for your children.',
   '/parent/book-assessment': 'A lovely first step towards confident learning.',
   '/parent/book-class': 'Choose a session for your child this week.',
   '/parent/bookings': 'Your upcoming sessions, all in one place.',
@@ -32,6 +34,7 @@ const subtitles: Record<string, string> = {
 
 const titles: Record<string, string> = {
   '/parent/children': 'My children',
+  '/parent/assessments': 'My assessments',
   '/parent/book-assessment': 'Book an assessment',
   '/parent/book-class': 'Book a class',
   '/parent/bookings': 'My bookings',

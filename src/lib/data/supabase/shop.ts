@@ -50,9 +50,22 @@ function toOrder(r: any): ShopOrder {
 async function callGuest(sb: AppSupabase, body: Record<string, unknown>) {
   const { data, error } = await sb.functions.invoke('shop-guest-checkout', { body });
   if (error) {
-    const j = await (error as any).context?.json?.().catch(() => null);
-    throw toAppError({ message: j?.error ?? (error as any).message });
+    // FunctionsHttpError stores the Response as .context — try to read the JSON body.
+    // Fall back to a user-friendly message if the body can't be parsed.
+    let code: string | undefined;
+    try {
+      const ctx = (error as any).context;
+      const j = ctx instanceof Response ? await ctx.clone().json() : null;
+      code = j?.error;
+    } catch { /* ignore */ }
+    if (code && code !== 'method_not_allowed') {
+      throw toAppError({ message: code });
+    }
+    // method_not_allowed means the Edge Function is not reachable — surface a clear message.
+    throw toAppError({ message: 'Guest checkout is not available right now. Please try again later.' });
   }
+  if (!data) throw toAppError({ message: 'Guest checkout is not available right now. Please try again later.' });
+  if (data.error) throw toAppError({ message: data.error });
   return data;
 }
 
@@ -84,13 +97,15 @@ async function placeGuest(sb: AppSupabase, input: PlaceOrderInput): Promise<Plac
     if (up.error && !alreadyExists(up.error.message)) throw toAppError(up.error);
     receiptPath = path;
   }
-  const { order } = await callGuest(sb, {
+  const result = await callGuest(sb, {
     action: 'place', orderId: input.orderId,
     items: input.items, paymentMethod: input.paymentMethod,
     delivery: input.delivery, receiptPath,
     receiptFilename: input.receipt?.name,
     captchaToken: input.captchaToken,
   });
+  const order = result?.order;
+  if (!order?.id) throw toAppError({ message: 'Unexpected response from checkout. Please try again.' });
   return { id: order.id, order_number: order.order_number, total_cents: order.total_cents };
 }
 
@@ -192,7 +207,7 @@ export function createShopMethods(sb: AppSupabase) {
 
     async uploadShopProductImage(productId: string, file: File): Promise<string> {
       const path = `${productId}/${Date.now()}-${safeName(file.name)}`;
-      const { error } = await sb.storage.from('shop-products').upload(path, file, { contentType: file.type, upsert: true });
+      const { error } = await sb.storage.from('shop-products').upload(path, file, { contentType: file.type, upsert: false });
       if (error) throw toAppError(error);
       return path;
     },

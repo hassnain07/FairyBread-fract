@@ -44,7 +44,7 @@ export function createReportsMethods(sb: AppSupabase) {
         .insert({
           child_id: report.child_id,
           teacher_id: report.teacher_id,
-          term: report.term,
+          term_label: report.term,
           overall: report.overall,
           subjects: report.subjects,
           strengths: report.strengths,

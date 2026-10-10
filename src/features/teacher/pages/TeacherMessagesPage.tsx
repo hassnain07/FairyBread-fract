@@ -1,22 +1,12 @@
-import { ArrowRight, Bell, MoreHorizontal } from 'lucide-react';
+import { Bell, MessageCircle, Send } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { dataClient } from '../../../lib/data/client';
 import { qk } from '../../../lib/data/queryKeys';
 import { useAuth } from '../../../app/providers';
 import { toAppError } from '../../../lib/data/errors';
+import { inboxTime, bubbleTime, dayDivider, dayKey } from '../../../lib/utils/chatTime';
 import type { Conversation } from '../../../types/message';
-
-function timeLabel(iso: string) {
-  const diff = Date.now() - new Date(iso).getTime();
-  const m = Math.floor(diff / 60_000);
-  if (m < 1) return 'Just now';
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  if (h < 48) return 'Yesterday';
-  return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(iso).getDay()];
-}
 
 export function TeacherMessagesPage() {
   const { teacherId } = useAuth();
@@ -26,7 +16,6 @@ export function TeacherMessagesPage() {
   const [error, setError] = useState('');
   const bodyRef = useRef<HTMLDivElement>(null);
 
-  // Auto-create teacher↔admin thread on first visit
   useEffect(() => {
     if (!teacherId) return;
     dataClient.startConversation!('teacher_staff', { teacherId })
@@ -77,17 +66,19 @@ export function TeacherMessagesPage() {
     send.mutate();
   }
 
-  const otherInitials = activeConv?.title.split(' ').map(x => x[0]).join('').slice(0, 2) ?? '';
-
   return (
-    <div className="page-stack messages-layout">
+    <div className={`page-stack messages-layout${activeConvId ? ' chat-open' : ''}`}>
+      {/* ── Inbox sidebar ── */}
       <div className="card conversation-list">
         <div className="card-heading">
           <div><span className="label">Inbox</span><h3>Messages</h3></div>
         </div>
         <div className="conversation-scroll">
+          {conversations.length === 0 && (
+            <p style={{ fontSize: 12, color: 'var(--muted)', padding: '12px 8px' }}>No conversations yet.</p>
+          )}
           {conversations.map(conv => {
-            const initials = conv.title.split(' ').map(x => x[0]).join('').slice(0, 2);
+            const initials = conv.title.split(' ').map(x => x[0]).join('').slice(0, 2).toUpperCase();
             return (
               <button
                 key={conv.id}
@@ -95,63 +86,80 @@ export function TeacherMessagesPage() {
                 onClick={() => setActiveConvId(conv.id)}
               >
                 <div className={`mini-avatar ${conv.avatar_color}-bg`}>{initials}</div>
-                <div>
-                  <strong>{conv.title}</strong>
-                  <span>{conv.last_message}</span>
+                <div className="conv-body">
+                  <div className="conv-top-row">
+                    <strong className="conv-name">{conv.title}</strong>
+                    <small className="conv-time">{inboxTime(conv.last_message_at)}</small>
+                  </div>
+                  <span className="conv-preview">{conv.last_message}</span>
                   {conv.unread_count > 0 && (
                     <span className="reminder-pill"><Bell size={11} />{conv.unread_count} new</span>
                   )}
                 </div>
-                <small>{timeLabel(conv.last_message_at)}</small>
               </button>
             );
           })}
         </div>
       </div>
 
+      {/* ── Chat window ── */}
       <div className="card chat-window">
         {activeConv ? (
           <>
             <div className="chat-head">
-              <div className={`mini-avatar ${activeConv.avatar_color}-bg`}>{otherInitials}</div>
+              <div className={`mini-avatar ${activeConv.avatar_color}-bg`} style={{ width: 38, height: 38, fontSize: 13 }}>
+                {activeConv.title.split(' ').map(x => x[0]).join('').slice(0, 2).toUpperCase()}
+              </div>
               <div>
                 <strong>{activeConv.title}</strong>
                 <span>Typically replies within a day</span>
               </div>
-              <MoreHorizontal size={18} />
+              <button className="btn-ghost chat-back-btn" onClick={() => setActiveConvId(null)} title="Back" style={{ marginLeft: 'auto' }}>
+                ✕
+              </button>
             </div>
+
             <div className="chat-body" ref={bodyRef}>
-              {messages.map(msg => {
+              {messages.map((msg, i) => {
                 const isMine = msg.sender_role === 'teacher';
+                const showDivider = i === 0 || dayKey(msg.created_at) !== dayKey(messages[i - 1].created_at);
                 return (
                   <div key={msg.id}>
-                    {msg.is_reminder && (
-                      <div className="chat-reminder-label"><Bell size={12} />Reminder</div>
+                    {showDivider && (
+                      <div className="chat-day-divider"><span>{dayDivider(msg.created_at)}</span></div>
                     )}
-                    <div className={`chat-bubble ${isMine ? 'sent' : 'received'}`}>
-                      {msg.body}
-                      <small>{timeLabel(msg.created_at)}</small>
+                    <div className={`chat-msg-wrap ${isMine ? 'sent' : 'received'}`}>
+                      {msg.is_reminder && (
+                        <div className="chat-reminder-label"><Bell size={12} />Reminder</div>
+                      )}
+                      {!isMine && <div className="chat-sender-name">{msg.sender_name}</div>}
+                      <div className={`chat-bubble ${isMine ? 'sent' : 'received'}`}>
+                        <span className="bubble-body">{msg.body}</span>
+                        <small className="bubble-time">{bubbleTime(msg.created_at)}</small>
+                      </div>
                     </div>
                   </div>
                 );
               })}
             </div>
-            {error && <p className="auth-error" style={{ margin: '0 12px' }}>{error}</p>}
+
+            {error && <p className="auth-error" style={{ margin: '0 16px 8px' }}>{error}</p>}
+
             <div className="chat-input">
               <input
-                placeholder="Write a message..."
+                placeholder="Write a message…"
                 value={draft}
                 onChange={e => setDraft(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
               />
-              <button onClick={handleSend} disabled={!draft.trim() || send.isPending}>
-                <ArrowRight size={17} />
+              <button onClick={handleSend} disabled={!draft.trim() || send.isPending} title="Send">
+                <Send size={15} />
               </button>
             </div>
           </>
         ) : (
           <div className="chat-empty">
-            <Bell size={32} />
+            <MessageCircle size={36} />
             <p>No conversations yet.</p>
           </div>
         )}

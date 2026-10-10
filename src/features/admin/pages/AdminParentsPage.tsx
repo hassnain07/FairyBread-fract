@@ -1,5 +1,7 @@
-import { Check, ChevronRight, Plus, Search, X } from 'lucide-react';
+import { Check, ChevronRight, Plus, X } from 'lucide-react';
 import { useState } from 'react';
+import { TableControls } from '../../../components/ui/TableControls';
+import { usePagination, useSearch } from '../../../hooks/usePagination';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '../../../components/ui/Button';
 import { dataClient } from '../../../lib/data/client';
@@ -18,7 +20,6 @@ const gatingClass: Record<TermGatingState, string> = {
 
 export function AdminParentsPage() {
   const qc = useQueryClient();
-  const [search, setSearch] = useState('');
   const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(null);
   const [showAdjust, setShowAdjust] = useState(false);
   const [adjustDelta, setAdjustDelta] = useState('');
@@ -77,10 +78,14 @@ export function AdminParentsPage() {
     return { ...f, gatingState, creditsRemaining, lastPaymentStatus, childCount, color: colours[i % colours.length] };
   });
 
-  const filtered = rows.filter(r =>
+  const { search, onSearch } = useSearch(() => onPage(1));
+
+  const allFiltered = rows.filter(r =>
     r.parent_name.toLowerCase().includes(search.toLowerCase()) ||
     (r.email ?? '').toLowerCase().includes(search.toLowerCase())
   );
+
+  const { page, totalPages, paged, onPage, total } = usePagination(allFiltered);
 
   const detail = selectedFamilyId ? rows.find(r => r.id === selectedFamilyId) ?? null : null;
   const detailActiveTerm = detailTerms.find(t => new Date(t.end_date) > new Date());
@@ -89,15 +94,10 @@ export function AdminParentsPage() {
     <div className="page-stack">
       <div className="page-toolbar">
         <div><h2>{families.length} parent accounts</h2><p>Families connected to Fairybread &amp; Fractions.</p></div>
-        <div className="toolbar-actions">
-          <div className="search-box">
-            <Search size={16} />
-            <input placeholder="Search parents" value={search} onChange={e => setSearch(e.target.value)} />
-          </div>
-        </div>
       </div>
 
       <div className="card table-card">
+        <TableControls search={search} onSearch={onSearch} page={page} totalPages={totalPages} total={total} onPage={onPage} placeholder="Search parents…" />
         <div className="table-wrap">
           <table>
             <thead>
@@ -105,7 +105,7 @@ export function AdminParentsPage() {
             </thead>
             <tbody>
               {isLoading && <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--muted)', padding: 24 }}>Loading…</td></tr>}
-              {filtered.map(p => (
+              {paged.map(p => (
                 <tr key={p.id} className="row-clickable" onClick={() => setSelectedFamilyId(p.id)}>
                   <td><strong className="table-name">{p.parent_name}</strong></td>
                   <td>{p.childCount}</td>
@@ -149,8 +149,8 @@ export function AdminParentsPage() {
               </div>
               {detailActiveTerm && (
                 <div className="review-detail-row">
-                  <span>Credits remaining</span>
-                  <b>{detailActiveTerm.classes_remaining} of {detailActiveTerm.classes_included}</b>
+                  <span>Term</span>
+                  <b>{detailActiveTerm.term_label ?? 'Active'} · ends {new Date(detailActiveTerm.end_date).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}</b>
                 </div>
               )}
               {detailPayments.length > 0 && (

@@ -137,9 +137,7 @@ export function LandingPage() {
       <footer>
         <Logo compact />
         <span>Made with care for curious minds.</span>
-        <button onClick={() => navigate('/admin')}>Admin demo <ArrowRight size={14} /></button>
       </footer>
-      <DemoBar />
     </div>
   );
 }

@@ -3,6 +3,8 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '../../../components/ui/Button';
 import { Toggle } from '../../../components/ui/Toggle';
+import { TableControls } from '../../../components/ui/TableControls';
+import { usePagination, useSearch } from '../../../hooks/usePagination';
 import { dataClient } from '../../../lib/data/client';
 import { qk } from '../../../lib/data/queryKeys';
 import { toAppError } from '../../../lib/data/errors';
@@ -43,13 +45,24 @@ export function AdminBookingsPage() {
     onError: (e: Error) => setCancelError(toAppError(e).message),
   });
 
+  const { search, onSearch } = useSearch(() => onPage(1));
+
   const filtered = bookings.filter(b => {
-    if (filter === 'All') return true;
     if (filter === 'Confirmed') return b.status === 'confirmed';
     if (filter === 'Waiting list') return b.status === 'waiting_list';
     if (filter === 'Cancelled') return b.status === 'cancelled';
     return true;
   });
+
+  const searchFiltered = filtered.filter(b => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (b.child?.name ?? '').toLowerCase().includes(q) ||
+      (b.session?.subject ?? '').toLowerCase().includes(q) ||
+      (b.session?.teacher_name ?? '').toLowerCase().includes(q);
+  });
+
+  const { page, totalPages, paged, onPage, total } = usePagination(searchFiltered);
 
   const counts: Record<Filter, number> = {
     All: bookings.length,
@@ -66,13 +79,15 @@ export function AdminBookingsPage() {
       </div>
 
       <div className="card table-card">
-        <div className="table-filters">
-          {FILTER_OPTIONS.map(f => (
-            <button key={f} className={filter === f ? 'filter-active' : ''} onClick={() => setFilter(f)}>
-              {f} <span>{counts[f]}</span>
-            </button>
-          ))}
-        </div>
+        <TableControls search={search} onSearch={onSearch} page={page} totalPages={totalPages} total={total} onPage={onPage} placeholder="Search student, subject or tutor…">
+          <div className="table-filters" style={{ border: 'none', padding: 0 }}>
+            {FILTER_OPTIONS.map(f => (
+              <button key={f} className={filter === f ? 'filter-active' : ''} onClick={() => { setFilter(f); onSearch(''); }}>
+                {f} <span>{counts[f]}</span>
+              </button>
+            ))}
+          </div>
+        </TableControls>
         <div className="table-wrap">
           <table>
             <thead>
@@ -82,10 +97,10 @@ export function AdminBookingsPage() {
               {isLoading && (
                 <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--muted)', padding: 24 }}>Loading…</td></tr>
               )}
-              {!isLoading && filtered.length === 0 && (
+              {!isLoading && paged.length === 0 && (
                 <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--muted)', padding: 24 }}>No bookings found.</td></tr>
               )}
-              {filtered.map(b => {
+              {paged.map(b => {
                 const session = b.session;
                 const child = b.child;
                 const date = session?.starts_at

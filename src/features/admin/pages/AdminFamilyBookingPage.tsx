@@ -65,7 +65,6 @@ export function AdminFamilyBookingPage() {
   const enrolledChildren = children.filter(c => c.enrolled);
   const activeTerm = terms.find(t => new Date(t.end_date) > new Date());
   const gatingState = gating?.state ?? 'NO_TERM_EVER';
-  const creditsLeft = gating?.classes_remaining ?? 0;
   const familyName = families.find(f => f.id === selectedFamilyId)?.parent_name ?? selectedFamilyId;
 
   const { mutate: purchaseTerm, isPending: purchasingTerm } = useMutation({
@@ -142,7 +141,7 @@ export function AdminFamilyBookingPage() {
             {doneState.type === 'term' ? 'Term activated!' : 'Class booked!'}
           </h2>
           <p style={{ color: 'var(--muted)', fontSize: 14, maxWidth: 380, margin: '0 auto 28px' }}>
-            {doneState.type === 'term' && `${doneState.familyName}'s account now has 10 class credits ready to use.`}
+            {doneState.type === 'term' && `${doneState.familyName}'s account is now active for this term. All classes have been booked automatically.`}
             {doneState.type === 'class-credit' && `${doneState.childName}'s ${doneState.subject} class has been confirmed using a term credit.`}
             {doneState.type === 'class-individual' && `${doneState.childName}'s ${doneState.subject} class has been confirmed and recorded as paid.`}
           </p>
@@ -167,7 +166,7 @@ export function AdminFamilyBookingPage() {
             <div><span className="label">Admin — on behalf of {familyName}</span><h3>10-week term package</h3></div>
           </div>
           {quote && (<>
-            <div className="invoice-line"><span>10-week term (10 class credits)</span><b>{formatMoney(quote.base_cents)}</b></div>
+            <div className="invoice-line"><span>10-week term</span><b>{formatMoney(quote.base_cents)}</b></div>
             {quote.registration_cents > 0 && <div className="invoice-line"><span>Registration fee</span><b>{formatMoney(quote.registration_cents)}</b></div>}
             <div className="divider" />
             <div className="invoice-line"><span>Subtotal</span><b>{formatMoney(quote.amount_cents)}</b></div>
@@ -177,7 +176,7 @@ export function AdminFamilyBookingPage() {
           </>)}
           <div className="admin-booking-note">
             <CircleDollarSign size={16} />
-            <span>This will immediately activate a new term for {familyName} with 10 class credits.</span>
+            <span>This will immediately activate a new term for {familyName}. All sessions in the term window will be auto-booked for enrolled children.</span>
           </div>
           {mutError && <p className="auth-error">{mutError}</p>}
           <div className="invoice-actions">
@@ -228,15 +227,15 @@ export function AdminFamilyBookingPage() {
             <span className="booking-mode-label">Booking method</span>
             <div className="booking-mode-options">
               <button
-                className={`booking-mode-btn ${bookingMode === 'term' ? 'active' : ''} ${gatingState !== 'ACTIVE_TERM' || creditsLeft === 0 ? 'disabled' : ''}`}
-                onClick={() => (gatingState === 'ACTIVE_TERM' && creditsLeft > 0) && setBookingMode('term')}
+                className={`booking-mode-btn ${bookingMode === 'term' ? 'active' : ''} ${gatingState !== 'ACTIVE_TERM' ? 'disabled' : ''}`}
+                onClick={() => gatingState === 'ACTIVE_TERM' && setBookingMode('term')}
               >
                 <Ticket size={16} />
                 <div>
-                  <strong>Use term credit</strong>
-                  <span>{gatingState === 'ACTIVE_TERM' ? `${creditsLeft} credit${creditsLeft !== 1 ? 's' : ''} remaining` : 'No active term'}</span>
+                  <strong>Term booking</strong>
+                  <span>{gatingState === 'ACTIVE_TERM' ? 'Auto-booked via term' : 'No active term'}</span>
                 </div>
-                {bookingMode === 'term' && gatingState === 'ACTIVE_TERM' && creditsLeft > 0 && <Check size={15} className="mode-check" />}
+                {bookingMode === 'term' && gatingState === 'ACTIVE_TERM' && <Check size={15} className="mode-check" />}
               </button>
               <button className={`booking-mode-btn ${bookingMode === 'individual' ? 'active' : ''}`} onClick={() => setBookingMode('individual')}>
                 <CreditCard size={16} />
@@ -252,7 +251,7 @@ export function AdminFamilyBookingPage() {
             {loadingSessions && <p style={{ color: 'var(--muted)', fontSize: 13 }}>Loading sessions…</p>}
             {sessions.map(session => {
               const isFull = session.spaces_left === 0;
-              const canBook = !isFull && (bookingMode === 'individual' || (gatingState === 'ACTIVE_TERM' && creditsLeft > 0));
+              const canBook = !isFull && (bookingMode === 'individual' || gatingState === 'ACTIVE_TERM');
               const d = new Date(session.starts_at);
               return (
                 <div className={`class-card ${session.program_color ?? 'pink'}`} key={session.id}>
@@ -270,7 +269,7 @@ export function AdminFamilyBookingPage() {
                   </div>
                   {canBook
                     ? <Button onClick={() => { setConfirmingSession(session); setMutError(''); }} icon={Check}>Book for {selectedChild.givenName}</Button>
-                    : <Button variant="soft" disabled>{isFull ? 'Class full' : 'No credits'}</Button>}
+                    : <Button variant="soft" disabled>{isFull ? 'Class full' : 'Not available'}</Button>}
                 </div>
               );
             })}
@@ -295,7 +294,7 @@ export function AdminFamilyBookingPage() {
                 <div className="review-detail-row"><span>Date</span><b>{new Date(confirmingSession.starts_at).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })}</b></div>
                 <div className="review-detail-row"><span>Time</span><b>{new Date(confirmingSession.starts_at).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })}</b></div>
                 <div className="review-detail-row"><span>Tutor</span><b>{confirmingSession.teacher_name}</b></div>
-                <div className="review-detail-row"><span>Cost</span><b>{bookingMode === 'term' ? '1 term credit' : 'Individual — recorded as paid'}</b></div>
+                <div className="review-detail-row"><span>Cost</span><b>{bookingMode === 'term' ? 'Term booking' : 'Individual — recorded as paid'}</b></div>
               </div>
               {mutError && <p className="auth-error">{mutError}</p>}
               <Button icon={Check} onClick={() => bookClass(confirmingSession)} disabled={bookingClass}>
@@ -346,7 +345,7 @@ export function AdminFamilyBookingPage() {
             <strong style={{ fontSize: 15 }}>{familyName}</strong>
             <p style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3 }}>
               {enrolledChildren.length} enrolled child{enrolledChildren.length !== 1 ? 'ren' : ''} ·{' '}
-              {gatingState === 'ACTIVE_TERM' ? `Active term · ${creditsLeft} credit${creditsLeft !== 1 ? 's' : ''} remaining` : gatingState === 'TERM_EXPIRED' ? 'Term expired' : 'No term'}
+              {gatingState === 'ACTIVE_TERM' ? `Active term` : gatingState === 'TERM_EXPIRED' ? 'Term expired' : 'No term'}
             </p>
           </div>
           <span className={`table-status ${gatingState === 'ACTIVE_TERM' ? 'confirmed' : 'pending'}`}>
@@ -364,7 +363,7 @@ export function AdminFamilyBookingPage() {
           <button className="admin-booking-action-card" onClick={() => setStep('term-purchase')} disabled={gatingState === 'ACTIVE_TERM'}>
             <div className="admin-booking-action-icon pink-bg"><CircleDollarSign size={22} /></div>
             <strong>{gatingState === 'ACTIVE_TERM' ? 'Term already active' : 'Purchase a term'}</strong>
-            <span>{gatingState === 'ACTIVE_TERM' ? `${creditsLeft} credits remaining.` : 'Activate a 10-week term immediately.'}</span>
+            <span>{gatingState === 'ACTIVE_TERM' ? 'Classes are auto-booked for this term.' : 'Activate a 10-week term immediately.'}</span>
             <div className="admin-booking-action-arrow"><ArrowRight size={16} /></div>
           </button>
         </div>

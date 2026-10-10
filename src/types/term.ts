@@ -7,15 +7,21 @@ export type Term = {
   status: TermStatus;
   term_label?: string;
   start_date: string;
-  end_date: string; // exclusive
-  classes_included: number;
-  classes_booked: number;
-  classes_remaining: number;
+  end_date: string; // exclusive (10 weeks)
+};
+
+export type SchoolTerm = {
+  id: string;
+  label: string;       // e.g. "Term 1 2025"
+  start_date: string;
+  end_date: string;
+  is_active: boolean;
+  created_at: string;
 };
 
 export type GatingSnapshot = {
   state: TermGatingState;
   active_term_id?: string;
-  classes_remaining: number;
+  classes_remaining: number; // kept for compat, not used for gating
   end_date?: string;
 };
